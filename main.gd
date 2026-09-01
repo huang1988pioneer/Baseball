@@ -27,14 +27,43 @@ var session := GameSession.new()
 var sound_on := true
 var coach_index := 0
 var resolution_token := 0
+var auto_pitch_token := 0
+var cpu_swing_token := 0
+var pending_character := ""
+var pending_team := ""
 
-var inning_cells: Array[Label] = []
+var away_inning_cells: Array[Label] = []
+var home_inning_cells: Array[Label] = []
 var pitch_buttons: Dictionary = {}
 var aim_buttons: Array[Button] = []
 
 var inning_label: Label
+var half_badge_label: Label
 var player_score_label: Label
 var rival_score_label: Label
+var away_score_label: Label
+var home_score_label: Label
+var player_team_name_label: Label
+var player_team_sub_label: Label
+var rival_team_name_label: Label
+var rival_team_sub_label: Label
+var away_team_name_label: Label
+var home_team_name_label: Label
+var away_team_sub_label: Label
+var home_team_sub_label: Label
+var away_tag_label: Label
+var home_tag_label: Label
+var player_crest: TextureRect
+var rival_crest: TextureRect
+var away_crest: TextureRect
+var home_crest: TextureRect
+var controls_label: Label
+var controls_hint_label: Label
+var setup_overlay: Control
+var setup_start_button: Button
+var setup_summary: Label
+var setup_character_buttons: Dictionary = {}
+var setup_team_buttons: Dictionary = {}
 var ball_count_label: Label
 var strike_count_label: Label
 var out_count_label: Label
@@ -63,13 +92,15 @@ var toast_token := 0
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
     _build_interface()
+    _build_setup_overlay()
     if stadium.has_signal("pitch_arrived"):
         stadium.pitch_arrived.connect(_on_pitch_arrived)
     _select_pitch("fastball")
     _select_aim(4)
     _update_ui()
-    _set_message("READY?", "選球後按「投球」", "靠近本壘時按下揮棒")
+    _set_message("LINEUP", "先選角色與球隊", "選好後再開始比賽")
     set_process(false)
+    _show_setup()
 
 func _process(_delta: float) -> void:
     if not session.is_live_pitch():
@@ -81,66 +112,64 @@ func _process(_delta: float) -> void:
     pitch_speed_label.text = str(session.active_pitch.get("speed", 0)) + " km/h · 球進壘中"
 
 func _build_interface() -> void:
+    mouse_filter = Control.MOUSE_FILTER_STOP
     var backdrop := ColorRect.new()
     backdrop.color = Color("e8f4ff")
     backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
     add_child(backdrop)
 
-    var scroll := ScrollContainer.new()
-    scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-    scroll.mouse_filter = Control.MOUSE_FILTER_PASS
-    add_child(scroll)
-
     var margin := MarginContainer.new()
-    margin.custom_minimum_size = Vector2(1380, 0)
-    margin.add_theme_constant_override("margin_left", 22)
-    margin.add_theme_constant_override("margin_right", 22)
-    margin.add_theme_constant_override("margin_top", 16)
-    margin.add_theme_constant_override("margin_bottom", 22)
-    scroll.add_child(margin)
+    margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    margin.add_theme_constant_override("margin_left", 16)
+    margin.add_theme_constant_override("margin_right", 16)
+    margin.add_theme_constant_override("margin_top", 10)
+    margin.add_theme_constant_override("margin_bottom", 12)
+    add_child(margin)
 
     var content := VBoxContainer.new()
-    content.add_theme_constant_override("separation", 14)
+    content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    content.add_theme_constant_override("separation", 8)
     margin.add_child(content)
 
     content.add_child(_build_topbar())
-    content.add_child(_build_hero())
 
     var body := HBoxContainer.new()
-    body.add_theme_constant_override("separation", 14)
+    body.size_flags_vertical = Control.SIZE_EXPAND_FILL
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    body.add_theme_constant_override("separation", 10)
     content.add_child(body)
 
     var game_column := VBoxContainer.new()
-    game_column.custom_minimum_size = Vector2(930, 0)
     game_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    game_column.add_theme_constant_override("separation", 12)
+    game_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    game_column.add_theme_constant_override("separation", 8)
     body.add_child(game_column)
 
-    game_column.add_child(_build_scoreboard())
-    game_column.add_child(_build_stadium_panel())
+    var scoreboard := _build_scoreboard()
+    game_column.add_child(scoreboard)
+
+    var stadium_panel := _build_stadium_panel()
+    stadium_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    game_column.add_child(stadium_panel)
     game_column.add_child(_build_controls())
 
-    var side_column := VBoxContainer.new()
-    side_column.custom_minimum_size = Vector2(360, 0)
-    side_column.add_theme_constant_override("separation", 12)
-    body.add_child(side_column)
-    side_column.add_child(_build_feature_card())
-    side_column.add_child(_build_mission_card())
-    side_column.add_child(_build_lineup_card())
-    side_column.add_child(_build_character_gallery())
-    side_column.add_child(_build_coach_card())
-    side_column.add_child(_build_shortcut_card())
-
-    content.add_child(_build_design_notes())
-    content.add_child(_build_footer())
+    var extras := VBoxContainer.new()
+    extras.visible = false
+    extras.add_child(_build_hero())
+    extras.add_child(_build_feature_card())
+    extras.add_child(_build_mission_card())
+    extras.add_child(_build_lineup_card())
+    extras.add_child(_build_character_gallery())
+    extras.add_child(_build_coach_card())
+    extras.add_child(_build_shortcut_card())
+    extras.add_child(_build_design_notes())
+    extras.add_child(_build_footer())
+    add_child(extras)
 
     tutorial = AcceptDialog.new()
     tutorial.title = "怎麼玩 · 喵喵棒球"
-    tutorial.dialog_text = "1. 選一個預判球路。\n2. 按「投球」，盯著球進入好球帶。\n3. 在 Timing Window 的綠色區域按下揮棒。\n\nPerfect 會帶來更高的長打機率。三個好球出局，四個壞球保送。"
+    tutorial.dialog_text = "1. 客隊先攻、主隊後攻。三出局後攻守轉換。\n2. 打擊時：投手會在 3–15 秒內自動投球，靠近本壘再揮棒。\n3. 守備時：自己選球路投球，對手會自動揮棒。\n\n三個好球出局，四個壞球保送。"
     tutorial.ok_button_text = "知道了，開始第一球"
     tutorial.min_size = Vector2(480, 260)
     add_child(tutorial)
@@ -184,19 +213,19 @@ func _build_feature_card() -> Control:
 
 func _build_topbar() -> Control:
     var bar := PanelContainer.new()
-    bar.custom_minimum_size = Vector2(0, 74)
+    bar.custom_minimum_size = Vector2(0, 54)
     bar.add_theme_stylebox_override("panel", _panel_style(Color(0.99, 1.0, 1.0, 0.98), Color(0.13, 0.40, 0.78, 0.34), 18))
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", 10)
     row.add_theme_stylebox_override("panel", _panel_style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
-    var pad := _pad(row, 13, 16, 13, 16)
+    var pad := _pad(row, 6, 12, 6, 12)
     bar.add_child(pad)
     var logo_texture := load("res://assets/generated/logo-v1.png") as Texture2D
     if logo_texture:
         var logo := TextureRect.new()
         logo.texture = logo_texture
-        logo.custom_minimum_size = Vector2(190, 68)
+        logo.custom_minimum_size = Vector2(150, 48)
         logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
         logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
         logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -219,6 +248,16 @@ func _build_topbar() -> Control:
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(spacer)
+    var combo_panel := PanelContainer.new()
+    combo_panel.custom_minimum_size = Vector2(118, 40)
+    combo_panel.add_theme_stylebox_override("panel", _panel_style(Color("fff6dd"), Color(0.95, 0.58, 0.10, 0.48), 12))
+    var combo_row := HBoxContainer.new()
+    combo_row.add_theme_constant_override("separation", 6)
+    combo_panel.add_child(_pad(combo_row, 4, 8, 4, 8))
+    combo_row.add_child(_label("COMBO", 8, Color("bd7a20")))
+    hero_combo_label = _label("0", 18, GOLD)
+    combo_row.add_child(hero_combo_label)
+    row.add_child(combo_panel)
     var version := _label("LIVE MATCH  ·  3 INNINGS", 9, BLUE)
     version.custom_minimum_size = Vector2(170, 0)
     version.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -252,94 +291,72 @@ func _build_hero() -> Control:
     lede.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     copy.add_child(lede)
     hero.add_child(copy)
-    var combo_panel := PanelContainer.new()
-    combo_panel.custom_minimum_size = Vector2(158, 70)
-    combo_panel.add_theme_stylebox_override("panel", _panel_style(Color("fff6dd"), Color(0.95, 0.58, 0.10, 0.48), 16))
-    var combo_row := HBoxContainer.new()
-    combo_row.add_theme_constant_override("separation", 9)
-    combo_panel.add_child(_pad(combo_row, 10, 15, 10, 15))
-    var combo_texture := load("res://assets/generated/combo-badge-v1.png") as Texture2D
-    if combo_texture:
-        var combo_icon := TextureRect.new()
-        combo_icon.custom_minimum_size = Vector2(43, 43)
-        combo_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-        combo_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-        combo_icon.texture = combo_texture
-        combo_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        combo_row.add_child(combo_icon)
-    else:
-        combo_row.add_child(_label("🔥", 24, GOLD))
-    var combo_text := VBoxContainer.new()
-    hero_combo_label = _label("0", 24, GOLD)
-    var combo_caption := _label("連續安打  COMBO", 9, Color("bd7a20"))
-    combo_text.add_child(hero_combo_label)
-    combo_text.add_child(combo_caption)
-    combo_row.add_child(combo_text)
-    hero.add_child(combo_panel)
     return hero
 
 func _build_scoreboard() -> Control:
-    var panel := _make_panel(Vector2(0, 108))
-    var v := _card_content(panel, 12)
+    var panel := _make_panel(Vector2(0, 168))
+    var v := _card_content(panel, 10)
     var heading := HBoxContainer.new()
+    heading.add_theme_constant_override("separation", 8)
     var live := _label("●  LIVE", 9, GREEN)
     heading.add_child(live)
+    half_badge_label = _label("▲  上半局", 10, Color("ffffff"))
+    half_badge_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    half_badge_label.custom_minimum_size = Vector2(86, 22)
+    half_badge_label.add_theme_stylebox_override("normal", _panel_style(Color("1e64c8"), Color("1b59ae"), 9))
+    heading.add_child(half_badge_label)
     var fill := Control.new()
     fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     heading.add_child(fill)
-    inning_label = _label("第 1 局 · 友誼賽", 10, Color("6583a5"))
+    inning_label = _label("第 1 局 · 客隊先攻", 10, Color("6583a5"))
     heading.add_child(inning_label)
     v.add_child(heading)
 
-    var score_row := HBoxContainer.new()
-    score_row.add_theme_constant_override("separation", 10)
-    var team_box := VBoxContainer.new()
-    team_box.custom_minimum_size = Vector2(145, 0)
-    var player_head := HBoxContainer.new()
-    player_head.add_theme_constant_override("separation", 6)
-    player_head.add_child(_team_icon("res://assets/generated/home-crest-v1.png"))
-    player_head.add_child(_label("喵白白隊", 12, TEXT))
-    var player_sub := _label("HOME CAT  ·  喵白白", 8, Color("6f8baa"))
-    team_box.add_child(player_head)
-    team_box.add_child(player_sub)
-    score_row.add_child(team_box)
-    var strip := HBoxContainer.new()
-    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    strip.add_theme_constant_override("separation", 1)
+    var header := HBoxContainer.new()
+    header.add_theme_constant_override("separation", 10)
+    var header_team := Control.new()
+    header_team.custom_minimum_size = Vector2(168, 0)
+    header.add_child(header_team)
+    var header_strip := HBoxContainer.new()
+    header_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    header_strip.add_theme_constant_override("separation", 1)
     for i in range(9):
-        var cell := _label(str(i + 1) + "\n—", 9, Color("5f7ea2"))
-        cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-        cell.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-        cell.custom_minimum_size = Vector2(30, 42)
-        cell.add_theme_stylebox_override("normal", _panel_style(Color("edf5ff"), Color(0.15, 0.39, 0.70, 0.18), 5))
-        strip.add_child(cell)
-        inning_cells.append(cell)
-    score_row.add_child(strip)
-    player_score_label = _label("0 R", 21, BLUE)
-    player_score_label.custom_minimum_size = Vector2(55, 0)
-    player_score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    score_row.add_child(player_score_label)
-    v.add_child(score_row)
+        var num := _label(str(i + 1), 8, Color("8ba9c8"))
+        num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        num.custom_minimum_size = Vector2(30, 16)
+        header_strip.add_child(num)
+    header.add_child(header_strip)
+    var header_r := _label("R", 9, Color("8ba9c8"))
+    header_r.custom_minimum_size = Vector2(55, 0)
+    header_r.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    header.add_child(header_r)
+    v.add_child(header)
 
-    var rival_row := HBoxContainer.new()
-    rival_row.add_theme_constant_override("separation", 10)
-    var rival_team_box := VBoxContainer.new()
-    rival_team_box.custom_minimum_size = Vector2(145, 0)
-    var rival_head := HBoxContainer.new()
-    rival_head.add_theme_constant_override("separation", 6)
-    rival_head.add_child(_team_icon("res://assets/generated/away-crest-v1.png"))
-    rival_head.add_child(_label("喵布布隊", 12, TEXT))
-    rival_team_box.add_child(rival_head)
-    rival_team_box.add_child(_label("AWAY CAT  ·  喵布布", 8, Color("6f8baa")))
-    rival_row.add_child(rival_team_box)
-    var rival_spacer := Control.new()
-    rival_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    rival_row.add_child(rival_spacer)
-    rival_score_label = _label("0 R", 21, Color("ef7e32"))
-    rival_score_label.custom_minimum_size = Vector2(55, 0)
-    rival_score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    rival_row.add_child(rival_score_label)
-    v.add_child(rival_row)
+    var away_built: Dictionary = _build_line_score_row("客", "喵布布隊", "AWAY CAT  ·  喵布布", "res://assets/generated/away-crest-v1.png", Color("ef7e32"))
+    v.add_child(away_built["row"])
+    away_crest = away_built["crest"]
+    away_team_name_label = away_built["name"]
+    away_team_sub_label = away_built["sub"]
+    away_tag_label = away_built["tag"]
+    away_inning_cells = away_built["cells"]
+    away_score_label = away_built["score"]
+    player_team_name_label = away_team_name_label
+    player_team_sub_label = away_team_sub_label
+    player_crest = away_crest
+    player_score_label = away_score_label
+
+    var home_built: Dictionary = _build_line_score_row("主", "喵白白隊", "HOME CAT  ·  喵白白", "res://assets/generated/home-crest-v1.png", BLUE)
+    v.add_child(home_built["row"])
+    home_crest = home_built["crest"]
+    home_team_name_label = home_built["name"]
+    home_team_sub_label = home_built["sub"]
+    home_tag_label = home_built["tag"]
+    home_inning_cells = home_built["cells"]
+    home_score_label = home_built["score"]
+    rival_team_name_label = home_team_name_label
+    rival_team_sub_label = home_team_sub_label
+    rival_crest = home_crest
+    rival_score_label = home_score_label
 
     var count_row := HBoxContainer.new()
     count_row.add_theme_constant_override("separation", 14)
@@ -347,7 +364,7 @@ func _build_scoreboard() -> Control:
     ball_count_label = _label("B  ○○○○", 9, Color("2d9a67"))
     strike_count_label = _label("S  ○○○", 9, Color("e79a1d"))
     out_count_label = _label("O  ○○○", 9, Color("df5d63"))
-    at_bat_label = _label("喵白白打擊 · 0 OUT", 9, Color("617f9f"))
+    at_bat_label = _label("先選角色與球隊", 9, Color("617f9f"))
     count_row.add_child(ball_count_label)
     count_row.add_child(strike_count_label)
     count_row.add_child(out_count_label)
@@ -359,7 +376,8 @@ func _build_scoreboard() -> Control:
     return panel
 
 func _build_stadium_panel() -> Control:
-    var holder := _make_panel(Vector2(0, 560))
+    var holder := _make_panel(Vector2(0, 240))
+    holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
     holder.clip_contents = true
     stadium.reparent(holder)
     stadium.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -378,7 +396,7 @@ func _build_stadium_panel() -> Control:
     status.mouse_filter = Control.MOUSE_FILTER_IGNORE
     status_kicker = _label("READY?", 10, Color("e9f6ff"))
     status_kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    status_title = _label("選球後按「投球」", 18, Color("ffffff"))
+    status_title = _label("先選角色與球隊", 18, Color("ffffff"))
     status_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     status_sub = _label("靠近本壘時按下揮棒", 10, Color("d3edff"))
     status_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -429,14 +447,16 @@ func _build_stadium_panel() -> Control:
     return holder
 
 func _build_controls() -> Control:
-    var panel := _make_panel(Vector2(0, 170))
+    var panel := _make_panel(Vector2(0, 132))
     var v := _card_content(panel, 13)
     var heading := HBoxContainer.new()
-    heading.add_child(_label("預判球路", 11, TEXT))
+    controls_label = _label("預判球路", 11, TEXT)
+    heading.add_child(controls_label)
     var fill := Control.new()
     fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     heading.add_child(fill)
-    heading.add_child(_label("ENTER / T 投球  ·  SPACE 揮棒  ·  1—4 選球", 9, Color("6b88a9")))
+    controls_hint_label = _label("先選角色與球隊", 9, Color("6b88a9"))
+    heading.add_child(controls_hint_label)
     v.add_child(heading)
 
     var pitch_row := HBoxContainer.new()
@@ -682,11 +702,185 @@ func _build_footer() -> Control:
     footer.add_child(_label("用一球的時間，測試一個好點子。", 9, Color("6b88a9")))
     return footer
 
+func _build_setup_overlay() -> void:
+    setup_overlay = Control.new()
+    setup_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    setup_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+    setup_overlay.z_index = 80
+    add_child(setup_overlay)
+
+    var dim := ColorRect.new()
+    dim.color = Color(0.01, 0.05, 0.11, 0.78)
+    dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    dim.mouse_filter = Control.MOUSE_FILTER_STOP
+    setup_overlay.add_child(dim)
+
+    var center := CenterContainer.new()
+    center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    setup_overlay.add_child(center)
+
+    var panel := PanelContainer.new()
+    panel.custom_minimum_size = Vector2(760, 0)
+    panel.add_theme_stylebox_override("panel", _panel_style(Color("10284c"), Color(0.45, 0.78, 1.0, 0.38), 20))
+    center.add_child(panel)
+
+    var body := VBoxContainer.new()
+    body.add_theme_constant_override("separation", 14)
+    panel.add_child(_pad(body, 22, 24, 22, 24))
+
+    var kicker := _label("PREMATCH  ·  先選再打", 9, Color("7dd2ff"))
+    body.add_child(kicker)
+    var title := _label("選擇角色與球隊", 26, Color("f3f9ff"))
+    body.add_child(title)
+    var lede := _label("客隊先攻、主隊後攻。三出局後攻守轉換：打擊時投手 3–15 秒自動投球，守備時對手自動揮棒。", 11, Color("9bb8d6"))
+    lede.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    body.add_child(lede)
+
+    body.add_child(_label("角色", 11, Color("d7ecff")))
+    var character_row := HBoxContainer.new()
+    character_row.add_theme_constant_override("separation", 10)
+    body.add_child(character_row)
+    for character_id in GameRules.CHARACTER_ORDER:
+        var character: Dictionary = GameRules.CHARACTERS[character_id]
+        var card := _setup_choice_card()
+        card.custom_minimum_size = Vector2(0, 228)
+        card.gui_input.connect(_on_setup_character_gui.bind(str(character_id)))
+        var card_body := VBoxContainer.new()
+        card_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        card_body.add_theme_constant_override("separation", 6)
+        var character_pad := _pad(card_body, 10, 10, 10, 10)
+        character_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        card.add_child(character_pad)
+        var art := TextureRect.new()
+        art.custom_minimum_size = Vector2(0, 108)
+        art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+        art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        art.texture = load(GameRules.art_path(str(character["art"]))) as Texture2D
+        card_body.add_child(art)
+        var name_label := _label(str(character["name"]), 13, Color("17385f"))
+        name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        card_body.add_child(name_label)
+        var role_label := _label(str(character["role_label"]) + "  ·  " + str(character["number"]), 9, Color("1e64c8"))
+        role_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        card_body.add_child(role_label)
+        var blurb := _label(str(character["blurb"]), 8, Color("607d9d"))
+        blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        blurb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        card_body.add_child(blurb)
+        character_row.add_child(card)
+        setup_character_buttons[str(character_id)] = card
+
+    body.add_child(_label("球隊", 11, Color("d7ecff")))
+    var team_row := HBoxContainer.new()
+    team_row.add_theme_constant_override("separation", 10)
+    body.add_child(team_row)
+    for team_id in GameRules.TEAM_ORDER:
+        var team: Dictionary = GameRules.TEAMS[team_id]
+        var card := _setup_choice_card()
+        card.custom_minimum_size = Vector2(0, 72)
+        card.gui_input.connect(_on_setup_team_gui.bind(str(team_id)))
+        var row := HBoxContainer.new()
+        row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        row.add_theme_constant_override("separation", 10)
+        var team_pad := _pad(row, 10, 12, 10, 12)
+        team_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        card.add_child(team_pad)
+        row.add_child(_team_icon(GameRules.art_path(str(team["art"]))))
+        var copy := VBoxContainer.new()
+        copy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        copy.add_child(_label(str(team["name"]), 14, Color("17385f")))
+        copy.add_child(_label(str(team["short"]), 8, Color("607d9d")))
+        row.add_child(copy)
+        team_row.add_child(card)
+        setup_team_buttons[str(team_id)] = card
+
+    setup_summary = _label("請先點選角色與球隊。", 10, Color("c9e6ff"))
+    body.add_child(setup_summary)
+    setup_start_button = _button("開始比賽", Vector2(0, 44))
+    setup_start_button.add_theme_font_size_override("font_size", 14)
+    setup_start_button.disabled = true
+    setup_start_button.pressed.connect(_start_match)
+    body.add_child(setup_start_button)
+    _refresh_setup_styles()
+
+    if toast_label:
+        toast_label.z_index = 90
+
+func _setup_choice_card() -> PanelContainer:
+    var card := PanelContainer.new()
+    card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    card.mouse_filter = Control.MOUSE_FILTER_STOP
+    card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    return card
+
+func _on_setup_character_gui(event: InputEvent, character_id: String) -> void:
+    if event is InputEventMouseButton:
+        var mouse := event as InputEventMouseButton
+        if mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
+            _on_setup_character_pressed(character_id)
+
+func _on_setup_team_gui(event: InputEvent, team_id: String) -> void:
+    if event is InputEventMouseButton:
+        var mouse := event as InputEventMouseButton
+        if mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
+            _on_setup_team_pressed(team_id)
+
 func _make_panel(min_size: Vector2) -> PanelContainer:
     var panel := PanelContainer.new()
     panel.custom_minimum_size = min_size
     panel.add_theme_stylebox_override("panel", _panel_style(PANEL, BORDER, 14))
     return panel
+
+func _build_line_score_row(side: String, name: String, sub: String, crest_path: String, total_color: Color) -> Dictionary:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", 10)
+    var team_box := VBoxContainer.new()
+    team_box.custom_minimum_size = Vector2(168, 0)
+    team_box.add_theme_constant_override("separation", 2)
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", 6)
+    var tag := _label(side, 8, Color("ffffff"))
+    tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    tag.custom_minimum_size = Vector2(22, 18)
+    tag.add_theme_stylebox_override("normal", _panel_style(Color("246ac4") if side == "主" else Color("ef7e32"), Color(0, 0, 0, 0), 6))
+    head.add_child(tag)
+    var crest := _team_icon(crest_path)
+    head.add_child(crest)
+    var name_label := _label(name, 12, TEXT)
+    head.add_child(name_label)
+    team_box.add_child(head)
+    var sub_label := _label(sub, 8, Color("6f8baa"))
+    team_box.add_child(sub_label)
+    row.add_child(team_box)
+    var strip := HBoxContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    strip.add_theme_constant_override("separation", 1)
+    var cells: Array[Label] = []
+    for i in range(9):
+        var cell := _label("—", 11, Color("5f7ea2"))
+        cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        cell.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+        cell.custom_minimum_size = Vector2(30, 28)
+        cell.add_theme_stylebox_override("normal", _panel_style(Color("edf5ff"), Color(0.15, 0.39, 0.70, 0.18), 5))
+        strip.add_child(cell)
+        cells.append(cell)
+    row.add_child(strip)
+    var total := _label("0", 21, total_color)
+    total.custom_minimum_size = Vector2(55, 0)
+    total.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    row.add_child(total)
+    return {
+        "row": row,
+        "crest": crest,
+        "name": name_label,
+        "sub": sub_label,
+        "tag": tag,
+        "cells": cells,
+        "score": total
+    }
 
 func _card_content(panel: Control, padding: int) -> VBoxContainer:
     var v := VBoxContainer.new()
@@ -831,18 +1025,25 @@ func _select_aim(index: int) -> void:
         aim_buttons[i].add_theme_stylebox_override("hover", _button_style(Color("bfe3ff"), Color("2f82dd"), 3))
 
 func _start_pitch() -> void:
+    if not session.match_ready:
+        return
     var started: Dictionary = session.start_pitch()
     if started.get("restart", false):
         _reset_game()
         return
     if not started.get("ok", false):
         return
+    auto_pitch_token += 1
     set_process(true)
     if stadium.has_method("start_pitch"):
         stadium.start_pitch(float(started["duration"]), str(started["kind"]), int(started["zone"]))
     _set_controls_disabled(true)
-    swing_button.disabled = false
-    _set_message("WATCH THE BALL", "準備揮棒！", "球越靠近本壘，Timing 越漂亮")
+    if session.is_player_offense():
+        swing_button.disabled = false
+        _set_message("WATCH THE BALL", "準備揮棒！", "球越靠近本壘，Timing 越漂亮")
+    else:
+        _set_message("THE PITCH", "球已出手", "對手會自動打擊")
+        _schedule_cpu_batter()
     pitch_readout_label.text = str(started["label"])
     pitch_speed_label.text = str(started["speed"]) + " km/h · 球進壘中"
 
@@ -869,6 +1070,8 @@ func _swing() -> void:
     _present_result(result)
 
 func _present_result(result: Dictionary) -> void:
+    cpu_swing_token += 1
+    auto_pitch_token += 1
     var burst := str(result.get("burst", ""))
     if burst != "":
         _show_burst(burst, str(result.get("burst_kind", "")))
@@ -876,25 +1079,28 @@ func _present_result(result: Dictionary) -> void:
     var followup := str(result.get("followup", "none"))
     if followup == "prepare":
         _finish_resolution(Callable(self, "_prepare_next_pitch").bind(str(result.get("prepare_message", ""))), float(result.get("delay", 0.9)))
-    elif followup == "advance_inning":
-        _finish_resolution(Callable(self, "_advance_inning"), float(result.get("delay", 1.1)))
+    elif followup == "switch_half" or followup == "advance_inning":
+        _finish_resolution(Callable(self, "_switch_half"), float(result.get("delay", 1.1)))
 
-func _advance_inning() -> void:
+func _switch_half() -> void:
     var current_token := resolution_token
-    var result: Dictionary = session.advance_inning()
+    var result: Dictionary = session.switch_half()
     _update_ui()
+    _sync_half_controls()
     if result.get("game_over", false):
         _set_controls_disabled(true)
         pitch_button.disabled = false
         pitch_button.text = "↻  再來一場\nPLAY AGAIN"
         var won := bool(result.get("won", false))
+        var player_name := str(session.player_team()["name"])
+        var rival_name := str(session.rival_team()["name"])
         _set_message(
             "FINAL · WIN" if won else "FINAL · NEXT TIME",
-            ("喵白白隊 %d : %d 喵布布隊" if won else "喵布布隊 %d : %d 喵白白隊") % ([session.player_score, session.rival_score] if won else [session.rival_score, session.player_score]),
-            "按「再來一場」重新挑戰"
+            ("%s %d : %d %s" if won else "%s %d : %d %s") % ([player_name, session.player_score, session.rival_score, rival_name] if won else [rival_name, session.rival_score, session.player_score, player_name]),
+            "按「再來一場」重新選擇角色與球隊"
         )
         _show_burst("比賽勝利！" if won else "比賽結束", "perfect" if won else "")
-        _show_toast("喵白白隊拿下勝利 🏆" if won else "下一場再把球打遠。")
+        _show_toast((player_name + "拿下勝利 🏆") if won else "下一場再來。")
         return
     _set_message(str(result["message_kicker"]), str(result["message_title"]), str(result["message_sub"]))
     await get_tree().create_timer(float(result.get("delay", 0.9))).timeout
@@ -907,8 +1113,9 @@ func _prepare_next_pitch(message: String = "") -> void:
         stadium.cancel_pitch()
     _set_controls_disabled(false)
     _update_ui()
-    if message != "":
-        _set_message("NEXT PITCH", message, "選球路後按投球")
+    if session.game_over or not session.match_ready:
+        return
+    _begin_half(message)
 
 func _finish_resolution(callback: Callable, delay: float) -> void:
     resolution_token += 1
@@ -920,28 +1127,36 @@ func _finish_resolution(callback: Callable, delay: float) -> void:
         callback.call()
 
 func _set_controls_disabled(disabled: bool) -> void:
+    if not session.match_ready:
+        disabled = true
     for button in pitch_buttons.values():
         button.disabled = disabled
     for button in aim_buttons:
         button.disabled = disabled
     if pitch_button:
-        pitch_button.disabled = disabled
+        pitch_button.disabled = disabled or (session.is_player_offense() and not session.game_over)
     if swing_button:
-        swing_button.disabled = disabled or not session.is_live_pitch()
+        swing_button.disabled = disabled or not session.is_live_pitch() or session.is_fielding()
     if session.game_over and pitch_button:
         pitch_button.disabled = false
 
 func _update_ui() -> void:
-    if not is_instance_valid(player_score_label):
+    if not is_instance_valid(away_score_label):
         return
-    inning_label.text = "第 " + str(session.inning) + " 局 · 友誼賽"
-    player_score_label.text = str(session.player_score) + " R"
-    rival_score_label.text = str(session.rival_score) + " R"
+    var top := session.half == "top"
+    inning_label.text = "第 " + str(session.inning) + " 局 · " + ("客隊進攻" if top else "主隊進攻")
+    if half_badge_label:
+        half_badge_label.text = ("▲  " if top else "▼  ") + session.half_label()
+        half_badge_label.add_theme_stylebox_override("normal", _panel_style(Color("ef7e32") if top else Color("1e64c8"), Color(0, 0, 0, 0), 9))
+    away_score_label.text = str(session.away_score())
+    home_score_label.text = str(session.home_score())
     hero_combo_label.text = str(session.combo)
     ball_count_label.text = "B  " + _lights(session.balls, 4)
     strike_count_label.text = str("S  ") + _lights(session.strikes, 3)
     out_count_label.text = "O  " + _lights(session.outs, 3)
-    at_bat_label.text = "喵白白打擊 · " + str(session.outs) + " OUT" if not session.game_over else "比賽結束"
+    var batting: Dictionary = session.batting_team()
+    var role_verb := "打擊" if session.is_player_offense() else "守備"
+    at_bat_label.text = "比賽結束" if session.game_over else session.half_label() + " · " + str(batting["name"]) + "進攻 · " + str(session.outs) + " OUT · " + role_verb
     mission_perfect_label.text = str(mini(session.perfects, 1)) + "/1"
     mission_hits_label.text = str(mini(session.hits, 3)) + "/3"
     mission_runs_label.text = str(mini(session.total_runs, 2)) + "/2"
@@ -953,11 +1168,20 @@ func _update_ui() -> void:
     _refresh_button_styles()
 
 func _render_innings() -> void:
-    for index in range(inning_cells.size()):
-        var run = session.inning_runs[index]
-        inning_cells[index].text = str(index + 1) + "\n" + ("—" if run == null else str(run))
-        inning_cells[index].add_theme_color_override("font_color", TEXT if index == session.inning - 1 and not session.game_over else Color("8ba9c8"))
-        inning_cells[index].add_theme_stylebox_override("normal", _panel_style(Color(0.08, 0.30, 0.52, 0.72) if index == session.inning - 1 and not session.game_over else Color(0.02, 0.09, 0.17, 0.56), Color(0.29, 0.51, 0.70, 0.22), 3))
+    _paint_inning_line(away_inning_cells, session.away_inning_runs, session.half == "top")
+    _paint_inning_line(home_inning_cells, session.home_inning_runs, session.half == "bottom")
+
+func _paint_inning_line(cells: Array[Label], runs: Array, batting: bool) -> void:
+    for index in range(cells.size()):
+        var value = runs[index] if index < runs.size() else null
+        cells[index].text = "—" if value == null else str(value)
+        var current := batting and index == session.inning - 1 and not session.game_over
+        cells[index].add_theme_color_override("font_color", Color("ffffff") if current else (TEXT if value != null else Color("8ba9c8")))
+        cells[index].add_theme_stylebox_override("normal", _panel_style(
+            Color(0.12, 0.38, 0.72, 0.88) if current else Color("edf5ff"),
+            Color(0.45, 0.72, 1.0, 0.55) if current else Color(0.15, 0.39, 0.70, 0.18),
+            5
+        ))
 
 func _lights(value: int, maximum: int) -> String:
     var result := ""
@@ -1001,6 +1225,8 @@ func _show_toast(text: String) -> void:
     )
 
 func _next_coach_note() -> void:
+    if coach_note_label == null:
+        return
     coach_index = (coach_index + 1) % GameRules.COACH_NOTES.size()
     coach_note_label.text = GameRules.COACH_NOTES[coach_index]
 
@@ -1021,12 +1247,21 @@ func _unhandled_input(event: InputEvent) -> void:
     var key_event := event as InputEventKey
     if not key_event.pressed or key_event.echo:
         return
+    if setup_overlay and setup_overlay.visible:
+        if key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER:
+            _start_match()
+            get_viewport().set_input_as_handled()
+        return
     match key_event.keycode:
         KEY_ENTER, KEY_KP_ENTER, KEY_T:
-            _start_pitch()
+            if session.game_over:
+                _reset_game()
+            elif session.is_fielding():
+                _start_pitch()
             get_viewport().set_input_as_handled()
         KEY_SPACE:
-            _swing()
+            if session.is_player_offense():
+                _swing()
             get_viewport().set_input_as_handled()
         KEY_R:
             _reset_game()
@@ -1054,15 +1289,155 @@ func _unhandled_input(event: InputEvent) -> void:
                 get_viewport().set_input_as_handled()
 
 func _reset_game() -> void:
-    resolution_token += 1
+    _cancel_pending_actions()
     session.reset()
     set_process(false)
     pitch_button.text = "↗  投球\nTHROW PITCH"
     _select_pitch(session.selected_pitch)
     _select_aim(session.aim_zone)
-    _set_controls_disabled(false)
+    _set_controls_disabled(true)
     if stadium.has_method("cancel_pitch"):
         stadium.cancel_pitch()
     _update_ui()
-    _set_message("READY?", "選球後按「投球」", "靠近本壘時按下揮棒")
-    _show_toast("新比賽開始，準備好揮棒！")
+    _set_message("LINEUP", "先選角色與球隊", "選好後再開始比賽")
+    _show_setup()
+    _show_toast("回到選角，準備下一場。")
+
+func _cancel_pending_actions() -> void:
+    resolution_token += 1
+    auto_pitch_token += 1
+    cpu_swing_token += 1
+
+func _show_setup() -> void:
+    if setup_overlay:
+        setup_overlay.visible = true
+    _refresh_setup_styles()
+
+func _on_setup_character_pressed(character_id: String) -> void:
+    pending_character = character_id
+    _refresh_setup_styles()
+
+func _on_setup_team_pressed(team_id: String) -> void:
+    pending_team = team_id
+    _refresh_setup_styles()
+
+func _refresh_setup_styles() -> void:
+    for character_id in setup_character_buttons:
+        var card: PanelContainer = setup_character_buttons[character_id]
+        var selected := str(character_id) == pending_character
+        card.add_theme_stylebox_override("panel", _button_style(Color("d7ecff") if selected else Color("f4f8fd"), Color("2f76cf") if selected else Color(0.14, 0.38, 0.70, 0.20), 14))
+    for team_id in setup_team_buttons:
+        var card: PanelContainer = setup_team_buttons[team_id]
+        var selected := str(team_id) == pending_team
+        card.add_theme_stylebox_override("panel", _button_style(Color("d7ecff") if selected else Color("f4f8fd"), Color("2f76cf") if selected else Color(0.14, 0.38, 0.70, 0.20), 14))
+    var ready := pending_character != "" and pending_team != ""
+    if setup_start_button:
+        setup_start_button.disabled = not ready
+        setup_start_button.add_theme_color_override("font_color", Color("ffffff"))
+        setup_start_button.add_theme_stylebox_override("normal", _button_style(Color("2b70c9"), Color("74bbff"), 12))
+        setup_start_button.add_theme_stylebox_override("hover", _button_style(Color("3e86df"), Color("b5e1ff"), 12))
+        setup_start_button.add_theme_stylebox_override("disabled", _button_style(Color("87a8cc"), Color(0.20, 0.35, 0.55, 0.2), 12))
+    if setup_summary:
+        if ready:
+            var character: Dictionary = GameRules.CHARACTERS[pending_character]
+            var team: Dictionary = GameRules.TEAMS[pending_team]
+            setup_summary.text = "以" + str(character["name"]) + "（" + str(character["role_label"]) + "）為" + str(team["name"]) + "出賽"
+        else:
+            setup_summary.text = "請先點選角色與球隊。"
+
+func _start_match() -> void:
+    if pending_character == "" or pending_team == "":
+        return
+    if not session.configure(pending_character, pending_team):
+        return
+    if setup_overlay:
+        setup_overlay.visible = false
+    _apply_match_identity()
+    _begin_match()
+
+func _apply_match_identity() -> void:
+    var away_team: Dictionary = GameRules.TEAMS["away"]
+    var home_team: Dictionary = GameRules.TEAMS["home"]
+    var player_team: Dictionary = session.player_team()
+    var character: Dictionary = session.player_character()
+    if away_team_name_label:
+        away_team_name_label.text = str(away_team["name"])
+        away_team_sub_label.text = str(away_team["short"])
+        home_team_name_label.text = str(home_team["name"])
+        home_team_sub_label.text = str(home_team["short"])
+    if away_crest:
+        away_crest.texture = load(GameRules.art_path(str(away_team["art"]))) as Texture2D
+    if home_crest:
+        home_crest.texture = load(GameRules.art_path(str(home_team["art"]))) as Texture2D
+    if away_tag_label:
+        away_tag_label.text = "客" if session.team_id != "away" else "我"
+        home_tag_label.text = "主" if session.team_id != "home" else "我"
+    _sync_half_controls()
+    if tutorial:
+        tutorial.dialog_text = "1. 客隊先攻（上半局），主隊後攻（下半局）。三出局後攻守轉換。\n2. 打擊時：投手會在 3–15 秒內自動投球，靠近本壘再揮棒。\n3. 守備時：自己選球路投球，對手會自動揮棒。\n\n三個好球出局，四個壞球保送。"
+    _update_ui()
+    _show_toast(str(character["name"]) + "加入" + str(player_team["name"]) + " · 客隊上半先攻")
+
+func _begin_match() -> void:
+    _select_pitch(session.selected_pitch)
+    _select_aim(session.aim_zone)
+    _sync_half_controls()
+    _set_controls_disabled(false)
+    _begin_half("第 1 局上半開始")
+
+func _begin_half(message: String = "") -> void:
+    _sync_half_controls()
+    _set_controls_disabled(false)
+    if session.is_player_offense():
+        _set_message(session.half_label(), message if message != "" else "輪到我們打擊", "客隊上半、主隊下半。投手 3–15 秒內投出")
+        _schedule_auto_pitch()
+    else:
+        _set_message(session.half_label(), message if message != "" else "輪到我們守備", "選球路後按投球，對手會自動揮棒")
+
+func _sync_half_controls() -> void:
+    if not session.match_ready or session.game_over:
+        return
+    if controls_label:
+        controls_label.text = "預判球路" if session.is_player_offense() else "選擇球路"
+    if controls_hint_label:
+        controls_hint_label.text = "SPACE 揮棒  ·  投手 3–15 秒自動投球" if session.is_player_offense() else "ENTER / T 投球  ·  對手自動打擊"
+    if pitch_button:
+        pitch_button.text = "等待投球\nCPU PITCH" if session.is_player_offense() else "↗  投球\nTHROW PITCH"
+
+func _schedule_auto_pitch() -> void:
+    if not session.is_player_offense() or session.game_over or not session.can_choose():
+        return
+    auto_pitch_token += 1
+    var token := auto_pitch_token
+    var delay := session.auto_pitch_delay()
+    pitch_speed_label.text = "投手準備中 · " + str(snapped(delay, 0.1)) + " 秒內出手"
+    await get_tree().create_timer(delay).timeout
+    if not is_inside_tree() or token != auto_pitch_token or not session.can_choose() or session.game_over:
+        return
+    session.choose_cpu_pitch()
+    _select_pitch(session.selected_pitch)
+    _start_pitch()
+
+func _schedule_cpu_batter() -> void:
+    if not session.is_fielding() or not session.is_live_pitch():
+        return
+    var plan: Dictionary = session.cpu_batter_plan()
+    if str(plan.get("action", "take")) != "swing":
+        return
+    cpu_swing_token += 1
+    var token := cpu_swing_token
+    var wait := float(session.active_pitch.get("duration", 1.0)) * float(plan.get("progress", 0.86))
+    await get_tree().create_timer(wait).timeout
+    if not is_inside_tree() or token != cpu_swing_token or not session.is_live_pitch():
+        return
+    var cpu_aim := GameRules.cpu_swing_aim(int(session.active_pitch.get("zone", 4)), session.rng)
+    var progress: float = float(stadium.get_pitch_progress()) if session.is_live_pitch() else 0.0
+    var result: Dictionary = session.swing(progress, cpu_aim)
+    if not result.get("ok", false):
+        return
+    if result.get("play_hit", false) and result.has("outcome") and stadium.has_method("swing_to"):
+        var outcome: Dictionary = result["outcome"]
+        stadium.swing_to(Vector2(float(outcome["flight_x"]), float(outcome["flight_y"])))
+    elif result.get("cancel_pitch", false) and stadium.has_method("cancel_pitch"):
+        stadium.cancel_pitch()
+    _present_result(result)

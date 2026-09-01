@@ -11,7 +11,7 @@
     <title>喵喵棒球 · 2D Baseball Lab</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="match-view">
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="#game" aria-label="回到遊戲">
@@ -19,6 +19,9 @@
         </a>
 
         <div class="topbar-actions">
+          <div class="hero-badge topbar-combo" aria-label="連續安打紀錄">
+            <span><b id="heroCombo">0</b><small>COMBO</small></span>
+          </div>
           <button class="ghost-button" id="howToPlayButton" type="button">
             <span aria-hidden="true">✦</span> 怎麼玩
           </button>
@@ -30,18 +33,11 @@
       </header>
 
       <main>
-        <section class="hero-copy" aria-labelledby="pageTitle">
+        <section class="hero-copy" aria-labelledby="pageTitle" hidden>
           <div>
             <p class="eyebrow"><span class="live-dot"></span> PLAYABLE PROTOTYPE · 3 INNINGS</p>
             <h1 id="pageTitle">把每一球，<span>打成你的主場。</span></h1>
-            <p class="hero-lede">
-              讀球路、抓節奏、揮出漂亮的安打。這是一個把「投球 → 揮棒 →
-              結果」做成手感的 2D 棒球小型原型。
-            </p>
-          </div>
-          <div class="hero-badge" aria-label="連續安打紀錄">
-            <img class="hero-badge-art" src="assets/generated/combo-badge-v1.png" alt="" />
-            <span><b id="heroCombo">0</b><small>連續安打</small></span>
+            <p class="hero-lede">讀球路、抓節奏、揮出漂亮的安打。</p>
           </div>
         </section>
 
@@ -50,27 +46,40 @@
             <div class="scoreboard glass-panel">
               <div class="scoreboard-title">
                 <span class="status-pill"><span class="live-dot"></span> LIVE</span>
-                <span>友誼賽 · 第 <b id="inningLabel">1</b> 局</span>
+                <span class="half-badge" id="halfBadge">▲ 上半局</span>
+                <span>友誼賽 · 第 <b id="inningLabel">1</b> 局 · <span id="halfAttack">客隊進攻</span></span>
               </div>
-              <div class="scoreboard-grid">
-                <div class="scoreboard-team team-player">
-                  <span class="team-logo logo-white"><img src="assets/generated/home-crest-v1.png" alt="" /></span>
-                  <div><b>喵白白隊</b><small>HOME CAT</small></div>
+              <div class="line-score" aria-label="棒球計分板">
+                <div class="line-score-head">
+                  <span class="team-col"></span>
+                  <div class="inning-heads" id="inningHeads"></div>
+                  <span class="r-col">R</span>
                 </div>
-                <div class="inning-scores" id="inningScores" aria-label="各局比分"></div>
-                <div class="score-total"><b id="playerScore">0</b><small>R</small></div>
-                <div class="scoreboard-team team-rival">
-                  <span class="team-logo logo-orange"><img src="assets/generated/away-crest-v1.png" alt="" /></span>
-                  <div><b>喵布布隊</b><small>AWAY CAT</small></div>
+                <div class="line-score-row" id="awayRow">
+                  <div class="scoreboard-team team-away">
+                    <span class="side-tag" id="awayTag">客</span>
+                    <span class="team-logo logo-orange"><img id="awayCrest" src="assets/generated/away-crest-v1.png" alt="" /></span>
+                    <div><b id="awayTeamName">喵布布隊</b><small id="awayTeamSub">AWAY CAT · 喵布布</small></div>
+                  </div>
+                  <div class="inning-scores" id="awayInningScores"></div>
+                  <div class="score-total rival-total"><b id="awayScore">0</b></div>
                 </div>
-                <div class="score-total rival-total"><b id="rivalScore">0</b><small>R</small></div>
+                <div class="line-score-row" id="homeRow">
+                  <div class="scoreboard-team team-home">
+                    <span class="side-tag home-tag" id="homeTag">主</span>
+                    <span class="team-logo logo-white"><img id="homeCrest" src="assets/generated/home-crest-v1.png" alt="" /></span>
+                    <div><b id="homeTeamName">喵白白隊</b><small id="homeTeamSub">HOME CAT · 喵白白</small></div>
+                  </div>
+                  <div class="inning-scores" id="homeInningScores"></div>
+                  <div class="score-total"><b id="homeScore">0</b></div>
+                </div>
               </div>
               <div class="count-row" aria-label="球數">
                 <span class="count-label">COUNT</span>
                 <span>B <i id="ballCount" class="count-lights ball-lights"></i></span>
                 <span>S <i id="strikeCount" class="count-lights strike-lights"></i></span>
                 <span>O <i id="outCount" class="count-lights out-lights"></i></span>
-                <span class="at-bat-label" id="atBatLabel">喵白白打擊</span>
+                <span class="at-bat-label" id="atBatLabel">先選角色與球隊</span>
               </div>
             </div>
 
@@ -108,7 +117,7 @@
               <div class="impact-ring" id="impactRing" aria-hidden="true"></div>
               <div class="result-burst" id="resultBurst" aria-live="polite"></div>
               <div class="game-message" id="gameMessage" aria-live="polite">
-                <span class="message-kicker">READY?</span><strong>選球後按「投球」</strong><small>靠近本壘時按下揮棒</small>
+                <span class="message-kicker">LINEUP</span><strong>先選角色與球隊</strong><small>選好後再開始比賽</small>
               </div>
 
               <div class="field-hud">
@@ -118,7 +127,7 @@
             </div>
 
             <div class="controls glass-panel">
-              <div class="controls-topline"><span class="controls-label">預判球路</span><span class="controls-hint"><kbd>SPACE</kbd> 揮棒 · <kbd>1—4</kbd> 選球</span></div>
+              <div class="controls-topline"><span class="controls-label" id="controlsLabel">預判球路</span><span class="controls-hint" id="controlsHint">先選角色與球隊</span></div>
               <div class="pitch-options" id="pitchOptions">
                 <button class="pitch-option selected" data-pitch="fastball" type="button"><span class="pitch-icon fastball-icon">⚾</span><span><b>快速球</b><small>145 km/h</small></span><kbd>1</kbd></button>
                 <button class="pitch-option" data-pitch="curveball" type="button"><span class="pitch-icon curveball-icon">◒</span><span><b>曲球</b><small>118 km/h</small></span><kbd>2</kbd></button>
@@ -179,11 +188,25 @@
       <footer class="footer"><span>喵喵棒球 · 2D Baseball Lab</span><span>用一球的時間，測試一個好點子。</span></footer>
     </div>
 
+    <div class="modal-backdrop setup-backdrop" id="setupModal">
+      <section class="modal setup-modal" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+        <span class="modal-kicker">PREMATCH · 先選再打</span>
+        <h2 id="setupTitle">選擇角色與球隊</h2>
+        <p class="setup-lede">客隊先攻、主隊後攻。三出局後攻守轉換：打擊時投手 3–15 秒自動投球，守備時對手自動揮棒。</p>
+        <h3 class="setup-heading">角色</h3>
+        <div class="setup-grid" id="characterOptions"></div>
+        <h3 class="setup-heading">球隊</h3>
+        <div class="setup-grid setup-teams" id="teamOptions"></div>
+        <p class="setup-summary" id="setupSummary">請先點選角色與球隊。</p>
+        <button class="primary-button" id="startMatchButton" type="button" disabled>開始比賽 <span>→</span></button>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="howToPlayModal" hidden>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <button class="modal-close" id="modalClose" type="button" aria-label="關閉">×</button>
-        <span class="modal-kicker">QUICK START · 30 SEC</span><h2 id="modalTitle">把球打遠，其實只要三步。</h2>
-        <div class="tutorial-steps"><div><span>1</span><b>選一個球路</b><small>先猜投手的節奏。快速球速度快，變速球會晚到。</small></div><div><span>2</span><b>盯著好球帶</b><small>用 3 × 3 瞄準格調整你的甜蜜點。</small></div><div><span>3</span><b>按下揮棒</b><small>球越接近本壘越好；Perfect 會帶來最大飛行距離。</small></div></div>
+        <span class="modal-kicker">QUICK START · 30 SEC</span><h2 id="modalTitle">先選角色，再打這一場。</h2>
+        <div class="tutorial-steps"><div><span>1</span><b>客隊先攻、主隊後攻</b><small>三出局後攻守轉換，上下半局都要打完。</small></div><div><span>2</span><b>打擊時等球揮棒</b><small>投手最快 3 秒、最慢 15 秒內自動投球，靠近本壘再揮。</small></div><div><span>3</span><b>守備時自己投球</b><small>選球路與落點後投球，對手會自動揮棒。</small></div></div>
         <div class="tutorial-tip"><span>⌁</span><p>小提示：不揮棒也會判定好壞球。三個好球出局，四個壞球保送。</p></div>
         <button class="primary-button" id="modalStart" type="button">開始第一球 <span>→</span></button>
       </section>

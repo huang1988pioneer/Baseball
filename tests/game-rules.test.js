@@ -85,4 +85,38 @@ test('pitch duration is stored in seconds', () => {
   assert.equal(rules.durationMs(rules.PITCHES.changeup), 1520);
 });
 
+test('auto pitch delay stays between 3 and 15 seconds', () => {
+  assert.equal(rules.autoPitchDelay(0), 3);
+  assert.equal(rules.autoPitchDelay(1), 15);
+  assert.equal(rules.autoPitchDelay(0.5), 9);
+  assert.equal(rules.AUTO_PITCH_MIN, 3);
+  assert.equal(rules.AUTO_PITCH_MAX, 15);
+});
+
+test('characters map to pitcher or batter roles', () => {
+  assert.equal(rules.CHARACTERS.meow_white.role, 'pitcher');
+  assert.equal(rules.CHARACTERS.meow_boo.role, 'batter');
+  assert.equal(rules.CHARACTERS.meow_mi.role, 'batter');
+  assert.equal(rules.TEAMS.home.name, '喵白白隊');
+  assert.equal(rules.TEAMS.away.name, '喵布布隊');
+});
+
+test('cpu helpers stay on known pitches and swing or take', () => {
+  assert.equal(rules.cpuPickPitch(() => 0), 'fastball');
+  assert.equal(rules.cpuPickPitch(() => 0.99), 'changeup');
+  const take = rules.cpuBatterPlan(true, 0.86, () => 1);
+  assert.equal(take.action, 'take');
+  const swing = rules.cpuBatterPlan(true, 0.86, () => 0);
+  assert.equal(swing.action, 'swing');
+  assert.ok(swing.progress >= 0.4 && swing.progress <= 0.97);
+  assert.equal(rules.cpuSwingAim(4, () => 0), 4);
+});
+
+test('cpu batter wait stays inside the live pitch window', () => {
+  const plan = rules.cpuBatterPlan(true, 0.86, () => 0);
+  const wait = rules.PITCHES.fastball.duration * plan.progress;
+  assert.ok(wait >= 0.4);
+  assert.ok(wait < rules.PITCHES.fastball.duration);
+});
+
 process.stdout.write(`\n${passed} tests passed\n`);

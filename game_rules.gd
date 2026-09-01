@@ -8,6 +8,56 @@ const BALLS_FOR_WALK := 4
 const STRIKES_FOR_OUT := 3
 const OUTS_PER_INNING := 3
 const IN_ZONE_CHANCE := 0.82
+const AUTO_PITCH_MIN := 3.0
+const AUTO_PITCH_MAX := 15.0
+
+const CHARACTER_ORDER := ["meow_white", "meow_boo", "meow_mi"]
+const TEAM_ORDER := ["home", "away"]
+
+const CHARACTERS := {
+	"meow_white": {
+		"id": "meow_white",
+		"name": "喵白白",
+		"role": "pitcher",
+		"role_label": "投手",
+		"number": "#1",
+		"blurb": "主場王牌，球速快、節奏穩。",
+		"art": "pitcher-v2.png"
+	},
+	"meow_boo": {
+		"id": "meow_boo",
+		"name": "喵布布",
+		"role": "batter",
+		"role_label": "打者",
+		"number": "#B",
+		"blurb": "揮棒果斷，擅長抓準甜蜜點。",
+		"art": "batter-v2.png"
+	},
+	"meow_mi": {
+		"id": "meow_mi",
+		"name": "咪嚕",
+		"role": "batter",
+		"role_label": "打者",
+		"number": "#7",
+		"blurb": "外野砲，安打後推進特別積極。",
+		"art": "runner-v1.png"
+	}
+}
+
+const TEAMS := {
+	"home": {
+		"id": "home",
+		"name": "喵白白隊",
+		"short": "HOME CAT  ·  喵白白",
+		"art": "home-crest-v1.png"
+	},
+	"away": {
+		"id": "away",
+		"name": "喵布布隊",
+		"short": "AWAY CAT  ·  喵布布",
+		"art": "away-crest-v1.png"
+	}
+}
 
 const PITCHES := {
 	"fastball": {"label": "快速球", "speed": 145, "duration": 1.06, "ideal": 0.86},
@@ -137,6 +187,36 @@ static func opponent_runs(roll: float) -> int:
 	if roll >= 0.35:
 		return 1
 	return 0
+
+
+static func auto_pitch_delay(roll: float) -> float:
+	return AUTO_PITCH_MIN + clampf(roll, 0.0, 1.0) * (AUTO_PITCH_MAX - AUTO_PITCH_MIN)
+
+
+static func cpu_pick_pitch(rng: RandomNumberGenerator) -> String:
+	return PITCH_ORDER[rng.randi_range(0, PITCH_ORDER.size() - 1)]
+
+
+static func cpu_batter_plan(in_zone: bool, ideal: float, rng: RandomNumberGenerator) -> Dictionary:
+	var swing_chance := 0.88 if in_zone else 0.22
+	if rng.randf() > swing_chance:
+		return {"action": "take", "progress": 0.0}
+	var progress := clampf(ideal + rng.randf_range(-0.12, 0.12), 0.52, 0.97)
+	if rng.randf() < 0.08:
+		progress = 0.40
+	return {"action": "swing", "progress": progress}
+
+
+static func cpu_swing_aim(pitch_zone: int, rng: RandomNumberGenerator) -> int:
+	if pitch_zone < 0:
+		return rng.randi_range(0, 8)
+	if rng.randf() < 0.5:
+		return pitch_zone
+	return clampi(pitch_zone + rng.randi_range(-2, 2), 0, 8)
+
+
+static func art_path(filename: String) -> String:
+	return "res://assets/generated/" + filename
 
 
 static func roll_outcome(grade: String, aim_distance: int, rng: RandomNumberGenerator) -> Dictionary:

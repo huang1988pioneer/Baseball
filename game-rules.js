@@ -10,6 +10,56 @@
   const STRIKES_FOR_OUT = 3;
   const OUTS_PER_INNING = 3;
   const IN_ZONE_CHANCE = 0.82;
+  const AUTO_PITCH_MIN = 3;
+  const AUTO_PITCH_MAX = 15;
+
+  const CHARACTER_ORDER = ['meow_white', 'meow_boo', 'meow_mi'];
+  const TEAM_ORDER = ['home', 'away'];
+
+  const CHARACTERS = {
+    meow_white: {
+      id: 'meow_white',
+      name: '喵白白',
+      role: 'pitcher',
+      roleLabel: '投手',
+      number: '#1',
+      blurb: '主場王牌，球速快、節奏穩。',
+      art: 'pitcher-v2.png',
+    },
+    meow_boo: {
+      id: 'meow_boo',
+      name: '喵布布',
+      role: 'batter',
+      roleLabel: '打者',
+      number: '#B',
+      blurb: '揮棒果斷，擅長抓準甜蜜點。',
+      art: 'batter-v2.png',
+    },
+    meow_mi: {
+      id: 'meow_mi',
+      name: '咪嚕',
+      role: 'batter',
+      roleLabel: '打者',
+      number: '#7',
+      blurb: '外野砲，安打後推進特別積極。',
+      art: 'runner-v1.png',
+    },
+  };
+
+  const TEAMS = {
+    home: {
+      id: 'home',
+      name: '喵白白隊',
+      short: 'HOME CAT  ·  喵白白',
+      art: 'home-crest-v1.png',
+    },
+    away: {
+      id: 'away',
+      name: '喵布布隊',
+      short: 'AWAY CAT  ·  喵布布',
+      art: 'away-crest-v1.png',
+    },
+  };
 
   const PITCHES = {
     fastball: { label: '快速球', speed: 145, duration: 1.06, ideal: 0.86, className: 'fastball' },
@@ -17,6 +67,8 @@
     slider: { label: '滑球', speed: 126, duration: 1.22, ideal: 0.88, className: 'slider' },
     changeup: { label: '變速球', speed: 108, duration: 1.52, ideal: 0.82, className: 'changeup' },
   };
+
+  const PITCH_ORDER = ['fastball', 'curveball', 'slider', 'changeup'];
 
   const COACH_NOTES = [
     'Perfect 的視窗很短，先盯著球進入好球帶。',
@@ -113,6 +165,35 @@
     return 0;
   }
 
+  function autoPitchDelay(roll) {
+    const t = Math.max(0, Math.min(1, roll));
+    return AUTO_PITCH_MIN + t * (AUTO_PITCH_MAX - AUTO_PITCH_MIN);
+  }
+
+  function cpuPickPitch(random = Math.random) {
+    const index = Math.min(PITCH_ORDER.length - 1, Math.floor(random() * PITCH_ORDER.length));
+    return PITCH_ORDER[index];
+  }
+
+  function cpuBatterPlan(inZone, ideal, random = Math.random) {
+    const swingChance = inZone ? 0.88 : 0.22;
+    if (random() > swingChance) return { action: 'take', progress: 0 };
+    let progress = Math.max(0.52, Math.min(0.97, ideal + (-0.12 + random() * 0.24)));
+    if (random() < 0.08) progress = 0.4;
+    return { action: 'swing', progress };
+  }
+
+  function cpuSwingAim(pitchZone, random = Math.random) {
+    if (pitchZone < 0) return Math.min(8, Math.floor(random() * 9));
+    if (random() < 0.5) return pitchZone;
+    const offset = Math.floor(random() * 5) - 2;
+    return Math.max(0, Math.min(8, pitchZone + offset));
+  }
+
+  function artPath(filename) {
+    return `assets/generated/${filename}`;
+  }
+
   function rollOutcome(grade, aimDistance, random = Math.random) {
     const source = OUTCOME_TABLES[grade] || OUTCOME_TABLES.GOOD;
     const nudge = Math.min(0.18, aimDistance * 0.055);
@@ -154,7 +235,14 @@
     STRIKES_FOR_OUT,
     OUTS_PER_INNING,
     IN_ZONE_CHANCE,
+    AUTO_PITCH_MIN,
+    AUTO_PITCH_MAX,
     PITCHES,
+    PITCH_ORDER,
+    CHARACTERS,
+    CHARACTER_ORDER,
+    TEAMS,
+    TEAM_ORDER,
     COACH_NOTES,
     OUTCOME_LABELS,
     classifyTiming,
@@ -164,6 +252,11 @@
     advanceRunners,
     forceWalk,
     opponentRuns,
+    autoPitchDelay,
+    cpuPickPitch,
+    cpuBatterPlan,
+    cpuSwingAim,
+    artPath,
     rollOutcome,
     durationMs,
   };
