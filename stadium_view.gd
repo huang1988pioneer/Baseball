@@ -19,6 +19,8 @@ var stadium_texture: Texture2D
 var pitcher_texture: Texture2D
 var batter_texture: Texture2D
 var catcher_texture: Texture2D
+var _unit_circle: PackedVector2Array = PackedVector2Array()
+var _ellipse_scratch: PackedVector2Array = PackedVector2Array()
 
 const NAVY := Color("102c50")
 const SKY_TOP := Color("15529a")
@@ -35,23 +37,35 @@ func _ready() -> void:
     pitcher_texture = load("res://assets/generated/pitcher-v2.png") as Texture2D
     batter_texture = load("res://assets/generated/batter-v2.png") as Texture2D
     catcher_texture = load("res://assets/generated/catcher-v2.png") as Texture2D
-    set_process(true)
+    _unit_circle.resize(32)
+    _ellipse_scratch.resize(32)
+    for index in range(32):
+        var angle := TAU * float(index) / 32.0
+        _unit_circle[index] = Vector2(cos(angle), sin(angle))
+    set_process(false)
     queue_redraw()
 
 func _process(delta: float) -> void:
+    var dirty := false
     if mode == "pitch":
         pitch_elapsed += delta
+        dirty = true
         if pitch_elapsed >= pitch_duration:
             pitch_elapsed = pitch_duration
             mode = "plate"
             pitch_arrived.emit()
     elif mode == "hit":
         hit_elapsed += delta
+        dirty = true
         if hit_elapsed > 1.0:
             mode = "idle"
     if flash_time > 0.0:
         flash_time = maxf(0.0, flash_time - delta)
-    queue_redraw()
+        dirty = true
+    if dirty:
+        queue_redraw()
+    if mode != "pitch" and mode != "hit" and flash_time <= 0.0:
+        set_process(false)
 
 func start_pitch(duration: float, kind: String, zone: int) -> void:
     pitch_duration = maxf(0.2, duration)
@@ -59,6 +73,7 @@ func start_pitch(duration: float, kind: String, zone: int) -> void:
     pitch_zone = zone
     pitch_elapsed = 0.0
     mode = "pitch"
+    set_process(true)
     queue_redraw()
 
 func get_pitch_progress() -> float:
@@ -71,12 +86,15 @@ func swing_to(target: Vector2) -> void:
     hit_elapsed = 0.0
     flash_time = 0.55
     mode = "hit"
+    set_process(true)
     queue_redraw()
 
 func cancel_pitch() -> void:
     mode = "idle"
     pitch_elapsed = 0.0
     hit_elapsed = 0.0
+    flash_time = 0.0
+    set_process(false)
     queue_redraw()
 
 func set_aim_zone(zone: int) -> void:
@@ -339,8 +357,12 @@ func _draw_impact(w: float, h: float) -> void:
         draw_line(inner, outer, Color(1.0, 0.9, 0.48, strength), 2.0)
 
 func _draw_ellipse(center: Vector2, radii: Vector2, color: Color) -> void:
-    var points := PackedVector2Array()
+    if _unit_circle.size() != 32:
+        _unit_circle.resize(32)
+        _ellipse_scratch.resize(32)
+        for index in range(32):
+            var angle := TAU * float(index) / 32.0
+            _unit_circle[index] = Vector2(cos(angle), sin(angle))
     for index in range(32):
-        var angle := TAU * float(index) / 32.0
-        points.append(center + Vector2(cos(angle) * radii.x, sin(angle) * radii.y))
-    draw_colored_polygon(points, color)
+        _ellipse_scratch[index] = center + Vector2(_unit_circle[index].x * radii.x, _unit_circle[index].y * radii.y)
+    draw_colored_polygon(_ellipse_scratch, color)

@@ -2,6 +2,8 @@
 
 以可愛貓咪為主角的 Godot 4 2D 棒球遊戲原型，對應瀏覽器版與桌面／行動匯出。核心循環是「選球路 → 投球 → 抓時機揮棒 → 推進跑者 → 三局結算」。
 
+目前版本是 **1.1.0**：規則層從 UI 抽出，Godot 與瀏覽器共用同一套球路／時機／跑者判定，並修正瀏覽器版四壞保送被當成全壘打的問題。
+
 ## 操作
 
 - `1`–`4`：選擇快速球、曲球、滑球或變速球
@@ -10,12 +12,22 @@
 - `Space`：揮棒
 - `R`：重新開始
 
+## 架構
+
+- `game_rules.gd` / `game-rules.js`：球路表、時機視窗、擊球分布、跑者推進與保送
+- `game_session.gd`：Godot 比賽狀態機
+- `main.gd`：介面與輸入
+- `stadium_view.gd`：球場繪製（閒置時停止每幀重繪）
+- `game.js`：瀏覽器操作層，直接呼叫 `MeowRules`
+
 ## 開發與驗證
 
 需要 Godot 4.7.2 或更新版本。命令列檢查：
 
 ```sh
-node --check game.js
+node --check game.js game-rules.js
+node tests/game-rules.test.js
+godot --headless --path . --script tests/test_game_rules.gd --quit
 godot --headless --path . --editor --quit --rendering-method gl_compatibility
 godot --headless --path . --rendering-method gl_compatibility --audio-driver Dummy --quit-after 180
 ```

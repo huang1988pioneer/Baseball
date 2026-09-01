@@ -3,18 +3,11 @@ extends Control
 ## Godot 4 playable prototype:
 ## pitch -> read the zone -> swing on timing -> resolve contact -> score.
 
-const TOTAL_INNINGS := 3
-const PITCHES := {
-    "fastball": {"label": "快速球", "speed": 145, "duration": 1.06, "ideal": 0.86},
-    "curveball": {"label": "曲球", "speed": 118, "duration": 1.40, "ideal": 0.91},
-    "slider": {"label": "滑球", "speed": 126, "duration": 1.22, "ideal": 0.88},
-    "changeup": {"label": "變速球", "speed": 108, "duration": 1.52, "ideal": 0.82}
-}
-const COACH_NOTES := [
-    "Perfect 的視窗很短，先盯著球進入好球帶。",
-    "瞄準格只影響接觸點；先猜球，再用時機補救。",
-    "兩好球後別急著追壞球，讓投手自己送一個保送。",
-    "連續安打會疊 COMBO，下一球的飛行距離也會更漂亮。"
+const PITCH_BUTTONS := [
+    ["fastball", "⚾  快速球", "145 km/h"],
+    ["curveball", "◒  曲球", "118 km/h"],
+    ["slider", "◉  滑球", "126 km/h"],
+    ["changeup", "◌  變速球", "108 km/h"]
 ]
 
 const BG := Color("12345b")
@@ -30,25 +23,7 @@ const RED := Color("df5c5b")
 
 @onready var stadium: Control = $StadiumView
 
-var inning := 1
-var outs := 0
-var balls := 0
-var strikes := 0
-var player_score := 0
-var rival_score := 0
-var inning_runs: Array = [null, null, null, null, null, null, null, null, null]
-var bases: Array[bool] = [false, false, false] # first, second, third
-
-var selected_pitch := "fastball"
-var aim_zone := 4
-var active_pitch: Dictionary = {}
-var resolving := false
-var game_over := false
-var game_started := false
-var combo := 0
-var hits := 0
-var perfects := 0
-var total_runs := 0
+var session := GameSession.new()
 var sound_on := true
 var coach_index := 0
 var resolution_token := 0
@@ -94,15 +69,16 @@ func _ready() -> void:
     _select_aim(4)
     _update_ui()
     _set_message("READY?", "選球後按「投球」", "靠近本壘時按下揮棒")
-    set_process(true)
+    set_process(false)
 
 func _process(_delta: float) -> void:
-    if not active_pitch.is_empty():
-        var progress: float = float(stadium.get_pitch_progress())
-        timing_bar.value = minf(100.0, progress * 100.0)
-        pitch_speed_label.text = str(active_pitch.get("speed", 0)) + " km/h · 球進壘中"
-    else:
+    if not session.is_live_pitch():
         timing_bar.value = 0.0
+        set_process(false)
+        return
+    var progress: float = float(stadium.get_pitch_progress())
+    timing_bar.value = minf(100.0, progress * 100.0)
+    pitch_speed_label.text = str(session.active_pitch.get("speed", 0)) + " km/h · 球進壘中"
 
 func _build_interface() -> void:
     var backdrop := ColorRect.new()
@@ -465,13 +441,7 @@ func _build_controls() -> Control:
 
     var pitch_row := HBoxContainer.new()
     pitch_row.add_theme_constant_override("separation", 7)
-    var pitch_data := [
-        ["fastball", "⚾  快速球", "145 km/h"],
-        ["curveball", "◒  曲球", "118 km/h"],
-        ["slider", "◉  滑球", "126 km/h"],
-        ["changeup", "◌  變速球", "108 km/h"]
-    ]
-    for item in pitch_data:
+    for item in PITCH_BUTTONS:
         var button := _button(str(item[1]) + "\n" + str(item[2]), Vector2(0, 50))
         button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         button.add_theme_font_size_override("font_size", 10)
@@ -589,7 +559,7 @@ func _build_coach_card() -> Control:
     copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     copy.add_child(_label("COACH'S NOTE", 8, BLUE))
     copy.add_child(_label("球來就看，\n甜蜜點再揮。", 19, TEXT))
-    coach_note_label = _label(COACH_NOTES[0], 8, Color("6b88a9"))
+    coach_note_label = _label(GameRules.COACH_NOTES[0], 8, Color("6b88a9"))
     coach_note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     copy.add_child(coach_note_label)
     var next := _button("知道了  →", Vector2(84, 27))
@@ -812,7 +782,7 @@ func _button_style(bg: Color, border: Color, radius: int = 9) -> StyleBoxFlat:
 func _refresh_button_styles() -> void:
     for name in pitch_buttons:
         var button: Button = pitch_buttons[name]
-        var selected: bool = str(name) == selected_pitch
+        var selected: bool = str(name) == session.selected_pitch
         button.add_theme_color_override("font_color", TEXT)
         button.add_theme_color_override("font_hover_color", TEXT)
         button.add_theme_color_override("font_pressed_color", TEXT)
@@ -835,293 +805,104 @@ func _refresh_button_styles() -> void:
         swing_button.add_theme_stylebox_override("disabled", _button_style(Color(0.32, 0.25, 0.16, 0.55), Color(0.5, 0.4, 0.25, 0.2), 18))
 
 func _on_pitch_button_pressed(name: String) -> void:
-    if active_pitch.is_empty() and not resolving and not game_over:
+    if session.can_choose():
         _select_pitch(name)
 
 func _select_pitch(name: String) -> void:
-    if not PITCHES.has(name):
+    if not session.select_pitch(name):
         return
-    selected_pitch = name
+    var definition: Dictionary = session.pitch_definition()
     if pitch_readout_label:
-        pitch_readout_label.text = str(PITCHES[name]["label"])
-        pitch_speed_label.text = str(PITCHES[name]["speed"]) + " km/h 預測"
+        pitch_readout_label.text = str(definition["label"])
+        pitch_speed_label.text = str(definition["speed"]) + " km/h 預測"
     _refresh_button_styles()
 
 func _on_aim_button_pressed(index: int) -> void:
-    if active_pitch.is_empty() and not resolving and not game_over:
+    if session.can_choose():
         _select_aim(index)
 
 func _select_aim(index: int) -> void:
-    aim_zone = clampi(index, 0, 8)
+    session.select_aim(index)
     if stadium.has_method("set_aim_zone"):
-        stadium.set_aim_zone(aim_zone)
+        stadium.set_aim_zone(session.aim_zone)
     for i in range(aim_buttons.size()):
-        var selected := i == aim_zone
+        var selected := i == session.aim_zone
         aim_buttons[i].add_theme_stylebox_override("normal", _button_style(Color("3f8ee0") if selected else Color("edf4fb"), Color("2b76ce") if selected else Color(0.14, 0.38, 0.70, 0.25), 3))
         aim_buttons[i].add_theme_stylebox_override("hover", _button_style(Color("bfe3ff"), Color("2f82dd"), 3))
 
 func _start_pitch() -> void:
-    if game_over:
+    var started: Dictionary = session.start_pitch()
+    if started.get("restart", false):
         _reset_game()
         return
-    if not active_pitch.is_empty() or resolving:
+    if not started.get("ok", false):
         return
-    game_started = true
-    var definition: Dictionary = PITCHES[selected_pitch]
-    var in_zone := randf() > 0.18
-    var zone := randi_range(0, 8) if in_zone else -1
-    active_pitch = definition.duplicate()
-    active_pitch["zone"] = zone
-    active_pitch["in_zone"] = in_zone
+    set_process(true)
     if stadium.has_method("start_pitch"):
-        stadium.start_pitch(float(definition["duration"]), selected_pitch, zone)
+        stadium.start_pitch(float(started["duration"]), str(started["kind"]), int(started["zone"]))
     _set_controls_disabled(true)
     swing_button.disabled = false
     _set_message("WATCH THE BALL", "準備揮棒！", "球越靠近本壘，Timing 越漂亮")
-    pitch_readout_label.text = str(definition["label"])
-    pitch_speed_label.text = str(definition["speed"]) + " km/h · 球進壘中"
+    pitch_readout_label.text = str(started["label"])
+    pitch_speed_label.text = str(started["speed"]) + " km/h · 球進壘中"
 
 func _on_pitch_arrived() -> void:
-    if active_pitch.is_empty() or resolving:
+    var result: Dictionary = session.resolve_take()
+    if not result.get("ok", false):
         return
-    _resolve_take()
-
-func _swing() -> void:
-    if active_pitch.is_empty():
-        if not game_over and not resolving:
-            _show_toast("先按「投球」，等球進來再揮棒！")
-        return
-    var pitch := active_pitch.duplicate()
-    var progress: float = float(stadium.get_pitch_progress())
-    active_pitch.clear()
-    var timing := _classify_timing(progress, float(pitch["ideal"]))
-    if timing["grade"] == "MISS":
-        if stadium.has_method("cancel_pitch"):
-            stadium.cancel_pitch()
-        _show_burst("SWING & MISS", "strike")
-        _resolve_strike("揮棒落空", 0.92)
-        return
-    var distance := _grid_distance(aim_zone, int(pitch["zone"])) if bool(pitch["in_zone"]) else 2
-    var outcome := _roll_outcome(str(timing["grade"]), distance)
-    var target := Vector2(float(outcome["flight_x"]), float(outcome["flight_y"]))
-    if stadium.has_method("swing_to"):
-        stadium.swing_to(target)
-    if timing["grade"] == "PERFECT":
-        perfects += 1
-        _show_burst("PERFECT!", "perfect")
-    else:
-        _show_burst(str(timing["label"]), "")
-    _resolve_contact(timing, outcome)
-
-func _resolve_take() -> void:
-    if active_pitch.is_empty():
-        return
-    var in_zone := bool(active_pitch["in_zone"])
-    active_pitch.clear()
     if stadium.has_method("cancel_pitch"):
         stadium.cancel_pitch()
-    if in_zone:
-        _show_burst("CALLED STRIKE", "strike")
-        _resolve_strike("看球好球", 0.90)
-    else:
-        _show_burst("BALL", "")
-        _resolve_ball(0.90)
+    _present_result(result)
 
-func _classify_timing(progress: float, ideal: float) -> Dictionary:
-    var delta := progress - ideal
-    var distance := absf(delta)
-    if distance <= 0.035:
-        return {"grade": "PERFECT", "label": "PERFECT!"}
-    if distance <= 0.09:
-        return {"grade": "GOOD", "label": "GOOD!"}
-    if distance <= 0.19:
-        return {"grade": "EARLY" if delta < 0.0 else "LATE", "label": "EARLY" if delta < 0.0 else "LATE"}
-    return {"grade": "MISS", "label": "MISS"}
-
-func _grid_distance(a: int, b: int) -> int:
-    if b < 0:
-        return 2
-    return abs(floori(float(a) / 3.0) - floori(float(b) / 3.0)) + abs((a % 3) - (b % 3))
-
-func _roll_outcome(grade: String, aim_distance: int) -> Dictionary:
-    var tables := {
-        "PERFECT": [["homerun", 0.16], ["triple", 0.08], ["double", 0.28], ["single", 0.43], ["foul", 0.02], ["out", 0.03]],
-        "GOOD": [["homerun", 0.07], ["triple", 0.06], ["double", 0.24], ["single", 0.43], ["foul", 0.08], ["out", 0.12]],
-        "EARLY": [["homerun", 0.015], ["triple", 0.025], ["double", 0.12], ["single", 0.31], ["foul", 0.28], ["out", 0.25]],
-        "LATE": [["homerun", 0.012], ["triple", 0.02], ["double", 0.14], ["single", 0.30], ["foul", 0.29], ["out", 0.238]]
-    }
-    var weights: Array = tables.get(grade, tables["GOOD"]).duplicate(true)
-    var nudge := minf(0.18, float(aim_distance) * 0.055)
-    for item in weights:
-        if item[0] == "out":
-            item[1] += nudge
-        elif item[0] == "homerun":
-            item[1] = maxf(0.005, item[1] - nudge * 0.5)
-        elif item[0] == "single" or item[0] == "double":
-            item[1] = maxf(0.01, item[1] - nudge * 0.18)
-    var total := 0.0
-    for item in weights:
-        total += float(item[1])
-    var roll := randf() * total
-    var selected := "out"
-    for item in weights:
-        roll -= float(item[1])
-        if roll <= 0.0:
-            selected = str(item[0])
-            break
-    var labels := {"homerun": "全壘打！", "triple": "三壘安打", "double": "二壘安打", "single": "一壘安打", "foul": "界外球", "out": "守備接殺"}
-    var flights := {
-        "homerun": [0.88, 0.08],
-        "triple": [0.82, 0.18],
-        "double": [0.76, 0.27],
-        "single": [0.68, 0.36],
-        "foul": [0.24 + randf() * 0.22, 0.17 + randf() * 0.11],
-        "out": [0.54 + randf() * 0.20, 0.21 + randf() * 0.26]
-    }
-    return {"key": selected, "label": labels[selected], "flight_x": flights[selected][0], "flight_y": flights[selected][1]}
-
-func _resolve_strike(reason: String, delay: float) -> void:
-    strikes += 1
-    combo = 0
-    _update_ui()
-    if strikes >= 3:
-        _register_out("三振！" + reason, delay + 0.12)
-    else:
-        _finish_resolution(Callable(self, "_prepare_next_pitch").bind("再來一球，抓住節奏。"), delay)
-
-func _resolve_ball(delay: float) -> void:
-    balls += 1
-    combo = 0
-    _update_ui()
-    if balls >= 4:
-        _show_burst("WALK", "")
-        var runs := _force_walk()
-        player_score += runs
-        total_runs += runs
-        inning_runs[inning - 1] = int(inning_runs[inning - 1] if inning_runs[inning - 1] != null else 0) + runs
-        balls = 0
-        strikes = 0
-        _finish_resolution(Callable(self, "_prepare_next_pitch").bind("四壞保送，跑者推進。"), delay + 0.12)
-    else:
-        _finish_resolution(Callable(self, "_prepare_next_pitch").bind("壞球，耐心等。"), delay)
-
-func _resolve_contact(timing: Dictionary, outcome: Dictionary) -> void:
-    var key := str(outcome["key"])
-    if key == "foul":
-        combo = 0
-        if strikes < 2:
-            strikes += 1
-        _update_ui()
-        _finish_resolution(Callable(self, "_prepare_next_pitch").bind("界外球，再來。"), 0.98)
+func _swing() -> void:
+    var progress: float = float(stadium.get_pitch_progress()) if session.is_live_pitch() else 0.0
+    var result: Dictionary = session.swing(progress)
+    if not result.get("ok", false):
+        if str(result.get("toast", "")) != "":
+            _show_toast(str(result["toast"]))
         return
-    if key == "out":
-        combo = 0
-        _register_out(str(timing["label"]) + " · 守備接殺", 1.02)
-        return
-    hits += 1
-    combo += 1
-    var distance := 4 if key == "homerun" else 3 if key == "triple" else 2 if key == "double" else 1
-    var runs := _advance_runners(distance, key == "homerun")
-    player_score += runs
-    total_runs += runs
-    inning_runs[inning - 1] = int(inning_runs[inning - 1] if inning_runs[inning - 1] != null else 0) + runs
-    balls = 0
-    strikes = 0
+    if result.get("play_hit", false) and result.has("outcome") and stadium.has_method("swing_to"):
+        var outcome: Dictionary = result["outcome"]
+        stadium.swing_to(Vector2(float(outcome["flight_x"]), float(outcome["flight_y"])))
+    elif result.get("cancel_pitch", false) and stadium.has_method("cancel_pitch"):
+        stadium.cancel_pitch()
+    _present_result(result)
+
+func _present_result(result: Dictionary) -> void:
+    var burst := str(result.get("burst", ""))
+    if burst != "":
+        _show_burst(burst, str(result.get("burst_kind", "")))
     _update_ui()
-    var combo_text := " · COMBO ×" + str(combo) if combo > 1 else ""
-    var run_text := " · " + str(runs) + " 分進帳" if runs > 0 else ""
-    _show_burst(str(outcome["label"]) + combo_text, "perfect" if key == "homerun" else "")
-    _finish_resolution(Callable(self, "_prepare_next_pitch").bind(str(outcome["label"]) + run_text), 1.25 if key == "homerun" else 1.02)
-
-func _register_out(reason: String, delay: float) -> void:
-    outs += 1
-    balls = 0
-    strikes = 0
-    combo = 0
-    _update_ui()
-    if outs >= 3:
-        _finish_resolution(Callable(self, "_advance_inning"), delay + 0.22)
-    else:
-        _finish_resolution(Callable(self, "_prepare_next_pitch").bind(reason), delay)
-
-func _advance_runners(distance: int, home_run: bool) -> int:
-    var runs := 0
-    if home_run or distance >= 4:
-        runs = 1 + int(bases[0]) + int(bases[1]) + int(bases[2])
-        bases = [false, false, false]
-        return runs
-    var next: Array[bool] = [false, false, false]
-    for index in range(2, -1, -1):
-        if not bases[index]:
-            continue
-        var destination := index + distance
-        if destination >= 3:
-            runs += 1
-        else:
-            next[destination] = true
-    var batter_destination := distance - 1
-    if batter_destination >= 3:
-        runs += 1
-    else:
-        next[batter_destination] = true
-    bases = next
-    return runs
-
-func _force_walk() -> int:
-    var runs := 0
-    if bases[0] and bases[1] and bases[2]:
-        runs = 1
-    if bases[0] and bases[1]:
-        bases[2] = true
-    elif bases[0]:
-        bases[1] = true
-    bases[0] = true
-    return runs
+    var followup := str(result.get("followup", "none"))
+    if followup == "prepare":
+        _finish_resolution(Callable(self, "_prepare_next_pitch").bind(str(result.get("prepare_message", ""))), float(result.get("delay", 0.9)))
+    elif followup == "advance_inning":
+        _finish_resolution(Callable(self, "_advance_inning"), float(result.get("delay", 1.1)))
 
 func _advance_inning() -> void:
     var current_token := resolution_token
-    if inning_runs[inning - 1] == null:
-        inning_runs[inning - 1] = 0
-    # The opponent half-inning stays automatic in this first prototype.
-    var opponent_runs := 0
-    var roll := randf()
-    if roll >= 0.35 and roll < 0.82:
-        opponent_runs = 1
-    elif roll >= 0.82:
-        opponent_runs = 2
-    rival_score += opponent_runs
-    bases = [false, false, false]
-    outs = 0
-    balls = 0
-    strikes = 0
-
-    if inning >= TOTAL_INNINGS:
-        game_over = true
-        resolving = false
-        _update_ui()
+    var result: Dictionary = session.advance_inning()
+    _update_ui()
+    if result.get("game_over", false):
         _set_controls_disabled(true)
         pitch_button.disabled = false
         pitch_button.text = "↻  再來一場\nPLAY AGAIN"
-        var won := player_score >= rival_score
+        var won := bool(result.get("won", false))
         _set_message(
             "FINAL · WIN" if won else "FINAL · NEXT TIME",
-            ("喵白白隊 %d : %d 喵布布隊" if won else "喵布布隊 %d : %d 喵白白隊") % ([player_score, rival_score] if won else [rival_score, player_score]),
+            ("喵白白隊 %d : %d 喵布布隊" if won else "喵布布隊 %d : %d 喵白白隊") % ([session.player_score, session.rival_score] if won else [session.rival_score, session.player_score]),
             "按「再來一場」重新挑戰"
         )
         _show_burst("比賽勝利！" if won else "比賽結束", "perfect" if won else "")
         _show_toast("喵白白隊拿下勝利 🏆" if won else "下一場再把球打遠。")
         return
-
-    inning += 1
-    _update_ui()
-    _set_message("INNING " + str(inning), "新的一局，重新讀球。", "對手半局自動拿下 " + str(opponent_runs) + " 分")
-    await get_tree().create_timer(0.9).timeout
-    if is_inside_tree() and not game_over and current_token == resolution_token:
-        _prepare_next_pitch("第 " + str(inning) + " 局開始")
+    _set_message(str(result["message_kicker"]), str(result["message_title"]), str(result["message_sub"]))
+    await get_tree().create_timer(float(result.get("delay", 0.9))).timeout
+    if is_inside_tree() and not session.game_over and current_token == resolution_token:
+        _prepare_next_pitch(str(result.get("prepare_message", "")))
 
 func _prepare_next_pitch(message: String = "") -> void:
-    resolving = false
-    active_pitch.clear()
+    session.prepare_next_pitch()
     if stadium.has_method("cancel_pitch"):
         stadium.cancel_pitch()
     _set_controls_disabled(false)
@@ -1132,7 +913,7 @@ func _prepare_next_pitch(message: String = "") -> void:
 func _finish_resolution(callback: Callable, delay: float) -> void:
     resolution_token += 1
     var current_token := resolution_token
-    resolving = true
+    session.resolving = true
     _set_controls_disabled(true)
     await get_tree().create_timer(delay).timeout
     if is_inside_tree() and current_token == resolution_token:
@@ -1146,37 +927,37 @@ func _set_controls_disabled(disabled: bool) -> void:
     if pitch_button:
         pitch_button.disabled = disabled
     if swing_button:
-        swing_button.disabled = disabled or active_pitch.is_empty()
-    if game_over and pitch_button:
+        swing_button.disabled = disabled or not session.is_live_pitch()
+    if session.game_over and pitch_button:
         pitch_button.disabled = false
 
 func _update_ui() -> void:
     if not is_instance_valid(player_score_label):
         return
-    inning_label.text = "第 " + str(inning) + " 局 · 友誼賽"
-    player_score_label.text = str(player_score) + " R"
-    rival_score_label.text = str(rival_score) + " R"
-    hero_combo_label.text = str(combo)
-    ball_count_label.text = "B  " + _lights(balls, 4)
-    strike_count_label.text = "S  " + _lights(strikes, 3)
-    out_count_label.text = "O  " + _lights(outs, 3)
-    at_bat_label.text = "喵白白打擊 · " + str(outs) + " OUT" if not game_over else "比賽結束"
-    mission_perfect_label.text = str(mini(perfects, 1)) + "/1"
-    mission_hits_label.text = str(mini(hits, 3)) + "/3"
-    mission_runs_label.text = str(mini(total_runs, 2)) + "/2"
-    batter_state_label.text = "FINAL" if game_over else "COMBO ×" + str(combo) if combo > 0 else "ON DECK"
-    batter_state_label.add_theme_color_override("font_color", GOLD if combo > 0 else Color("7192b5"))
+    inning_label.text = "第 " + str(session.inning) + " 局 · 友誼賽"
+    player_score_label.text = str(session.player_score) + " R"
+    rival_score_label.text = str(session.rival_score) + " R"
+    hero_combo_label.text = str(session.combo)
+    ball_count_label.text = "B  " + _lights(session.balls, 4)
+    strike_count_label.text = str("S  ") + _lights(session.strikes, 3)
+    out_count_label.text = "O  " + _lights(session.outs, 3)
+    at_bat_label.text = "喵白白打擊 · " + str(session.outs) + " OUT" if not session.game_over else "比賽結束"
+    mission_perfect_label.text = str(mini(session.perfects, 1)) + "/1"
+    mission_hits_label.text = str(mini(session.hits, 3)) + "/3"
+    mission_runs_label.text = str(mini(session.total_runs, 2)) + "/2"
+    batter_state_label.text = "FINAL" if session.game_over else "COMBO ×" + str(session.combo) if session.combo > 0 else "ON DECK"
+    batter_state_label.add_theme_color_override("font_color", GOLD if session.combo > 0 else Color("7192b5"))
     if stadium.has_method("set_bases"):
-        stadium.set_bases(bases)
+        stadium.set_bases(session.bases)
     _render_innings()
     _refresh_button_styles()
 
 func _render_innings() -> void:
     for index in range(inning_cells.size()):
-        var run = inning_runs[index]
+        var run = session.inning_runs[index]
         inning_cells[index].text = str(index + 1) + "\n" + ("—" if run == null else str(run))
-        inning_cells[index].add_theme_color_override("font_color", TEXT if index == inning - 1 and not game_over else Color("8ba9c8"))
-        inning_cells[index].add_theme_stylebox_override("normal", _panel_style(Color(0.08, 0.30, 0.52, 0.72) if index == inning - 1 and not game_over else Color(0.02, 0.09, 0.17, 0.56), Color(0.29, 0.51, 0.70, 0.22), 3))
+        inning_cells[index].add_theme_color_override("font_color", TEXT if index == session.inning - 1 and not session.game_over else Color("8ba9c8"))
+        inning_cells[index].add_theme_stylebox_override("normal", _panel_style(Color(0.08, 0.30, 0.52, 0.72) if index == session.inning - 1 and not session.game_over else Color(0.02, 0.09, 0.17, 0.56), Color(0.29, 0.51, 0.70, 0.22), 3))
 
 func _lights(value: int, maximum: int) -> String:
     var result := ""
@@ -1220,8 +1001,8 @@ func _show_toast(text: String) -> void:
     )
 
 func _next_coach_note() -> void:
-    coach_index = (coach_index + 1) % COACH_NOTES.size()
-    coach_note_label.text = COACH_NOTES[coach_index]
+    coach_index = (coach_index + 1) % GameRules.COACH_NOTES.size()
+    coach_note_label.text = GameRules.COACH_NOTES[coach_index]
 
 func _toggle_sound() -> void:
     sound_on = not sound_on
@@ -1247,56 +1028,38 @@ func _unhandled_input(event: InputEvent) -> void:
         KEY_SPACE:
             _swing()
             get_viewport().set_input_as_handled()
+        KEY_R:
+            _reset_game()
+            get_viewport().set_input_as_handled()
         KEY_1:
-            if active_pitch.is_empty() and not resolving and not game_over:
+            if session.can_choose():
                 _select_pitch("fastball")
                 get_viewport().set_input_as_handled()
         KEY_2:
-            if active_pitch.is_empty() and not resolving and not game_over:
+            if session.can_choose():
                 _select_pitch("curveball")
                 get_viewport().set_input_as_handled()
         KEY_3:
-            if active_pitch.is_empty() and not resolving and not game_over:
+            if session.can_choose():
                 _select_pitch("slider")
                 get_viewport().set_input_as_handled()
         KEY_4:
-            if active_pitch.is_empty() and not resolving and not game_over:
+            if session.can_choose():
                 _select_pitch("changeup")
                 get_viewport().set_input_as_handled()
         KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT:
-            if active_pitch.is_empty() and not resolving and not game_over:
-                var row := aim_zone / 3
-                var col := aim_zone % 3
-                if key_event.keycode == KEY_UP:
-                    row = maxi(0, row - 1)
-                elif key_event.keycode == KEY_DOWN:
-                    row = mini(2, row + 1)
-                elif key_event.keycode == KEY_LEFT:
-                    col = maxi(0, col - 1)
-                elif key_event.keycode == KEY_RIGHT:
-                    col = mini(2, col + 1)
-                _select_aim(row * 3 + col)
+            if session.can_choose():
+                session.move_aim(key_event.keycode)
+                _select_aim(session.aim_zone)
                 get_viewport().set_input_as_handled()
 
 func _reset_game() -> void:
     resolution_token += 1
-    inning = 1
-    outs = 0
-    balls = 0
-    strikes = 0
-    player_score = 0
-    rival_score = 0
-    inning_runs = [null, null, null, null, null, null, null, null, null]
-    bases = [false, false, false]
-    active_pitch.clear()
-    resolving = false
-    game_over = false
-    game_started = false
-    combo = 0
-    hits = 0
-    perfects = 0
-    total_runs = 0
+    session.reset()
+    set_process(false)
     pitch_button.text = "↗  投球\nTHROW PITCH"
+    _select_pitch(session.selected_pitch)
+    _select_aim(session.aim_zone)
     _set_controls_disabled(false)
     if stadium.has_method("cancel_pitch"):
         stadium.cancel_pitch()

@@ -55,19 +55,12 @@
     },
   };
 
-  const PITCHES = {
-    fastball: { label: '快速球', speed: 145, duration: 1060, ideal: 0.86, className: 'fastball' },
-    curveball: { label: '曲球', speed: 118, duration: 1400, ideal: 0.91, className: 'curveball' },
-    slider: { label: '滑球', speed: 126, duration: 1220, ideal: 0.88, className: 'slider' },
-    changeup: { label: '變速球', speed: 108, duration: 1520, ideal: 0.82, className: 'changeup' },
-  };
-
-  const COACH_NOTES = [
-    'Perfect 的視窗很短，先盯著球進入好球帶。',
-    '瞄準格只影響接觸點；先猜球，再用時機補救。',
-    '兩好球後別急著追壞球，讓投手自己送一個保送。',
-    '連續安打會疊 COMBO，下一球的飛行距離也會更漂亮。',
-  ];
+  const rules = window.MeowRules;
+  if (!rules) {
+    throw new Error('game-rules.js must load before game.js');
+  }
+  const PITCHES = rules.PITCHES;
+  const COACH_NOTES = rules.COACH_NOTES;
 
   const state = {
     inning: 1,
@@ -175,11 +168,23 @@
         swing();
         return;
       }
+      if (event.key === 'Enter' || event.key === 't' || event.key === 'T') {
+        event.preventDefault();
+        if (state.gameOver) resetGame();
+        else startPitch();
+        return;
+      }
+      if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault();
+        resetGame();
+        return;
+      }
       const pitchKeys = { '1': 'fastball', '2': 'curveball', '3': 'slider', '4': 'changeup' };
       if (pitchKeys[event.key] && !state.pitch && !state.resolving && !state.gameOver) {
         selectPitch(pitchKeys[event.key]);
       }
       if (event.key.startsWith('Arrow') && !state.pitch && !state.resolving && !state.gameOver) {
+        event.preventDefault();
         moveAim(event.key);
       }
     });
@@ -207,34 +212,26 @@
   }
 
   function moveAim(key) {
-    const row = Math.floor(state.aim / 3);
-    const col = state.aim % 3;
-    let nextRow = row;
-    let nextCol = col;
-    if (key === 'ArrowUp') nextRow = Math.max(0, row - 1);
-    if (key === 'ArrowDown') nextRow = Math.min(2, row + 1);
-    if (key === 'ArrowLeft') nextCol = Math.max(0, col - 1);
-    if (key === 'ArrowRight') nextCol = Math.min(2, col + 1);
-    selectAim(nextRow * 3 + nextCol);
+    selectAim(rules.moveAim(state.aim, key));
   }
 
   function startPitch() {
     if (state.pitch || state.resolving || state.gameOver) return;
     state.gameStarted = true;
     const definition = PITCHES[state.selectedPitch];
-    const inZone = Math.random() > 0.18;
+    const durationMs = rules.durationMs(definition);
+    const inZone = Math.random() > (1 - rules.IN_ZONE_CHANCE);
     const zone = inZone ? Math.floor(Math.random() * 9) : -1;
     const startedAt = performance.now();
-    state.pitch = { ...definition, zone, inZone, startedAt };
+    state.pitch = { ...definition, duration: durationMs, zone, inZone, startedAt };
 
     const targetX = inZone ? 45 + (zone % 3) * 2.6 : 40 + Math.random() * 20;
     const targetY = inZone ? 52 + Math.floor(zone / 3) * 3.2 : 50 + Math.random() * 9;
-    ui.ball.style.setProperty('--pitch-duration', `${definition.duration}ms`);
+    ui.ball.style.setProperty('--pitch-duration', `${durationMs}ms`);
     ui.ball.style.setProperty('--target-x', `${targetX}%`);
     ui.ball.style.setProperty('--target-y', `${targetY}%`);
     ui.ball.className = `ball is-pitching pitch-${definition.className}`;
-    ui.ball.style.setProperty('--pitch-duration', `${definition.duration}ms`);
-    ui.timingCursor.style.setProperty('--pitch-duration', `${definition.duration}ms`);
+    ui.timingCursor.style.setProperty('--pitch-duration', `${durationMs}ms`);
     ui.timingCursor.classList.remove('playing');
     // Force a reflow so a repeated pitch always restarts the cursor animation.
     void ui.timingCursor.offsetWidth;
@@ -248,7 +245,7 @@
     ui.swingButton.classList.add('pulse');
     window.setTimeout(() => ui.swingButton.classList.remove('pulse'), 520);
 
-    state.pitchTimer = window.setTimeout(() => pitchArrived(), definition.duration + 75);
+    state.pitchTimer = window.setTimeout(() => pitchArrived(), durationMs + 75);
   }
 
   function pitchArrived() {
@@ -279,8 +276,8 @@
       return;
     }
 
-    const aimDistance = pitch.inZone ? gridDistance(state.aim, pitch.zone) : 2;
-    const outcome = rollOutcome(timing.grade, aimDistance);
+    const aimDistance = pitch.inZone ? rules.gridDistance(state.aim, pitch.zone) : 2;
+    const outcome = rules.rollOutcome(timing.grade, aimDistance);
     if (timing.grade === 'PERFECT') {
       state.perfects += 1;
       ui.strikeZone.classList.add('perfect-flash');
@@ -288,57 +285,15 @@
     }
 
     ui.ball.className = `ball is-hit hit-${outcome.key}`;
-    ui.ball.style.setProperty('--flight-x', `${outcome.flightX}%`);
-    ui.ball.style.setProperty('--flight-y', `${outcome.flightY}%`);
+    ui.ball.style.setProperty('--flight-x', `${outcome.flightX * 100}%`);
+    ui.ball.style.setProperty('--flight-y', `${outcome.flightY * 100}%`);
     ui.impactRing.classList.add('show');
     showBurst(timing.label, timing.grade === 'PERFECT' ? 'perfect' : '');
     resolveContact(timing, outcome);
   }
 
   function classifyTiming(progress, ideal) {
-    const delta = progress - ideal;
-    const distance = Math.abs(delta);
-    if (distance <= 0.035) return { grade: 'PERFECT', label: 'PERFECT!' };
-    if (distance <= 0.09) return { grade: 'GOOD', label: 'GOOD!' };
-    if (distance <= 0.19) return { grade: delta < 0 ? 'EARLY' : 'LATE', label: delta < 0 ? 'EARLY' : 'LATE' };
-    return { grade: 'MISS', label: 'MISS' };
-  }
-
-  function gridDistance(a, b) {
-    if (b < 0) return 2;
-    const ar = Math.floor(a / 3); const ac = a % 3;
-    const br = Math.floor(b / 3); const bc = b % 3;
-    return Math.abs(ar - br) + Math.abs(ac - bc);
-  }
-
-  function rollOutcome(grade, aimDistance) {
-    // Contact quality controls the distribution; aim distance nudges it toward weak contact.
-    const base = {
-      PERFECT: [['homerun', .16], ['triple', .08], ['double', .28], ['single', .43], ['foul', .02], ['out', .03]],
-      GOOD: [['homerun', .07], ['triple', .06], ['double', .24], ['single', .43], ['foul', .08], ['out', .12]],
-      EARLY: [['homerun', .015], ['triple', .025], ['double', .12], ['single', .31], ['foul', .28], ['out', .25]],
-      LATE: [['homerun', .012], ['triple', .02], ['double', .14], ['single', .3], ['foul', .29], ['out', .238]],
-    }[grade] || [['out', 1]];
-    const nudge = Math.min(.18, aimDistance * .055);
-    const weights = base.map(([key, weight]) => {
-      if (key === 'out') return [key, weight + nudge];
-      if (key === 'homerun') return [key, Math.max(.005, weight - nudge * .5)];
-      if (key === 'single' || key === 'double') return [key, Math.max(.01, weight - nudge * .18)];
-      return [key, weight];
-    });
-    const total = weights.reduce((sum, [, weight]) => sum + weight, 0);
-    let roll = Math.random() * total;
-    let selected = 'out';
-    for (const [key, weight] of weights) {
-      roll -= weight;
-      if (roll <= 0) { selected = key; break; }
-    }
-    const flights = {
-      homerun: [88, 8], triple: [82, 18], double: [76, 27], single: [68, 36], foul: [20 + Math.random() * 22, 17 + Math.random() * 11], out: [54 + Math.random() * 20, 21 + Math.random() * 26],
-    };
-    const [flightX, flightY] = flights[selected];
-    const labels = { homerun: '全壘打！', triple: '三壘安打', double: '二壘安打', single: '一壘安打', foul: '界外球', out: '守備接殺' };
-    return { key: selected, label: labels[selected], flightX, flightY };
+    return rules.classifyTiming(progress, ideal);
   }
 
   function resolveTake() {
@@ -360,7 +315,7 @@
     state.strikes += 1;
     state.combo = 0;
     updateUI();
-    if (state.strikes >= 3) {
+    if (state.strikes >= rules.STRIKES_FOR_OUT) {
       registerOut(`三振！${reason}`, delay + 120);
     } else {
       finishResolution(() => prepareNextPitch('再來一球，抓住節奏。'), delay);
@@ -371,11 +326,18 @@
     state.balls += 1;
     state.combo = 0;
     updateUI();
-    if (state.balls >= 4) {
+    if (state.balls >= rules.BALLS_FOR_WALK) {
       showBurst('WALK', '');
-      advanceRunners(1, true);
+      const walked = rules.forceWalk(state.bases);
+      state.bases = walked.bases;
+      if (walked.runs > 0) {
+        state.playerScore += walked.runs;
+        state.totalRuns += walked.runs;
+        state.inningRuns[state.inning - 1] = (state.inningRuns[state.inning - 1] || 0) + walked.runs;
+      }
       state.balls = 0;
       state.strikes = 0;
+      updateUI();
       finishResolution(() => prepareNextPitch('四壞保送，跑者推進。'), delay + 120);
     } else {
       finishResolution(() => prepareNextPitch('壞球，耐心等。'), delay);
@@ -399,8 +361,9 @@
 
     state.hits += 1;
     state.combo += 1;
-    const basesToAdvance = key === 'homerun' ? 4 : key === 'triple' ? 3 : key === 'double' ? 2 : 1;
-    const runs = advanceRunners(basesToAdvance, key === 'homerun');
+    const moved = rules.advanceRunners(state.bases, rules.basesAdvanced(key), key === 'homerun');
+    state.bases = moved.bases;
+    const runs = moved.runs;
     state.playerScore += runs;
     state.totalRuns += runs;
     state.inningRuns[state.inning - 1] = (state.inningRuns[state.inning - 1] || 0) + runs;
@@ -419,42 +382,23 @@
     state.strikes = 0;
     state.combo = 0;
     updateUI();
-    if (state.outs >= 3) {
+    if (state.outs >= rules.OUTS_PER_INNING) {
       finishResolution(() => advanceInning(), delay + 220);
     } else {
       finishResolution(() => prepareNextPitch(reason), delay);
     }
   }
 
-  function advanceRunners(distance, homeRun = false) {
-    let runs = 0;
-    if (homeRun || distance >= 4) {
-      runs = 1 + state.bases.filter(Boolean).length;
-      state.bases = [false, false, false];
-      return runs;
-    }
-    const next = [false, false, false];
-    for (let index = 2; index >= 0; index -= 1) {
-      if (!state.bases[index]) continue;
-      const destination = index + distance;
-      if (destination >= 3) runs += 1;
-      else next[destination] = true;
-    }
-    next[distance - 1] = true;
-    state.bases = next;
-    return runs;
-  }
-
   function advanceInning() {
     // The opponent's half-inning is intentionally lightweight in this prototype.
-    const opponentRuns = Math.random() < 0.35 ? 0 : Math.random() < 0.72 ? 1 : 2;
+    const opponentRuns = rules.opponentRuns(Math.random());
     state.rivalScore += opponentRuns;
     state.rivalInningRuns[state.inning - 1] = opponentRuns;
     state.bases = [false, false, false];
     state.outs = 0;
     state.balls = 0;
     state.strikes = 0;
-    if (state.inning >= state.innings) {
+    if (state.inning >= rules.TOTAL_INNINGS) {
       state.gameOver = true;
       updateUI();
       setControlsDisabled(true);
